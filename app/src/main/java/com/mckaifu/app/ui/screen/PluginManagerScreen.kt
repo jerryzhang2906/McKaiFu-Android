@@ -33,14 +33,10 @@ fun PluginManagerScreen(serverId: String, navController: NavController, vm: Main
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
     var selectedTab by remember { mutableIntStateOf(0) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
-    val mockPlugins = listOf(
-        PluginInfo("EssentialsX", "2.20.1", "EssentialsX团队", "基础插件", "essentials.jar", isEnabled = true),
-        PluginInfo("LuckPerms", "5.4.7", "Luck", "权限管理", "luckperms.jar", isEnabled = true),
-        PluginInfo("WorldEdit", "7.3.0", "EngineHub", "世界编辑", "worldedit.jar", isEnabled = true),
-        PluginInfo("Vault", "1.7.3", "MilkBowl", "经济接口", "vault.jar", isEnabled = false),
-        PluginInfo("PlaceholderAPI", "2.11.5", "PlaceholderAPI", "变量插件", "placeholderapi.jar", isEnabled = true),
-    )
+    val enabledPlugins = remember(serverId, refreshKey) { vm.listPlugins(serverId) }
+    val disabledPlugins = remember(serverId, refreshKey) { vm.listDisabledPlugins(serverId) }
 
     Scaffold(
         topBar = {
@@ -52,6 +48,9 @@ fun PluginManagerScreen(serverId: String, navController: NavController, vm: Main
                     }
                 },
                 actions = {
+                    IconButton(onClick = { refreshKey++ }) {
+                        Icon(Icons.Filled.Refresh, "刷新")
+                    }
                     IconButton(onClick = {
                         navController.navigate(Screen.PluginStore.createRoute(serverId))
                     }) {
@@ -70,27 +69,60 @@ fun PluginManagerScreen(serverId: String, navController: NavController, vm: Main
         ) {
             TabRow(selectedTabIndex = selectedTab, containerColor = ZalithSurface, contentColor = ZalithPrimary) {
                 Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 },
-                    text = { Text("已安装 (${mockPlugins.size})") })
-                Tab(selected = selectedTab == 1, onClick = {
-                    selectedTab = 1
+                    text = { Text("已启用 (${enabledPlugins.size})") })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 },
+                    text = { Text("已禁用 (${disabledPlugins.size})") })
+                Tab(selected = selectedTab == 2, onClick = {
+                    selectedTab = 2
                     navController.navigate(Screen.PluginStore.createRoute(serverId))
                 }, text = { Text("插件商店") })
             }
 
             when (selectedTab) {
-                0 -> LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    item {
-                        SectionHeader("已安装的插件")
-                        Spacer(Modifier.height(4.dp))
-                        Text("共 ${mockPlugins.size} 个插件",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary)
+                0 -> if (enabledPlugins.isEmpty()) {
+                    EmptyStateView(
+                        icon = Icons.Filled.Extension,
+                        title = "暂无插件",
+                        subtitle = "去插件商店安装,或将 JAR 放入 plugins 目录"
+                    )
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item {
+                            SectionHeader("已启用的插件")
+                            Spacer(Modifier.height(4.dp))
+                            Text("共 ${enabledPlugins.size} 个插件",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary)
+                        }
+                        items(enabledPlugins, key = { it.name }) { plugin ->
+                            PluginInstalledCard(plugin, serverId, vm, onChanged = { refreshKey++ })
+                        }
                     }
-                    items(mockPlugins, key = { it.name }) { plugin ->
-                        PluginInstalledCard(plugin, serverId, vm)
+                }
+                1 -> if (disabledPlugins.isEmpty()) {
+                    EmptyStateView(
+                        icon = Icons.Filled.ExtensionOff,
+                        title = "没有禁用的插件",
+                        subtitle = "在已启用列表关闭插件后会显示在这里"
+                    )
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item {
+                            SectionHeader("已禁用的插件")
+                            Spacer(Modifier.height(4.dp))
+                            Text("共 ${disabledPlugins.size} 个插件",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary)
+                        }
+                        items(disabledPlugins, key = { it.name }) { plugin ->
+                            PluginInstalledCard(plugin, serverId, vm, onChanged = { refreshKey++ })
+                        }
                     }
                 }
             }
@@ -99,7 +131,7 @@ fun PluginManagerScreen(serverId: String, navController: NavController, vm: Main
 }
 
 @Composable
-fun PluginInstalledCard(plugin: PluginInfo, serverId: String, vm: MainViewModel) {
+fun PluginInstalledCard(plugin: PluginInfo, serverId: String, vm: MainViewModel, onChanged: () -> Unit) {
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -121,16 +153,17 @@ fun PluginInstalledCard(plugin: PluginInfo, serverId: String, vm: MainViewModel)
                 Column {
                     Text(plugin.name, fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleSmall)
-                    Text("v${plugin.version} | ${plugin.author}",
+                    Text(plugin.fileName,
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary)
                 }
             }
             Switch(
                 checked = plugin.isEnabled,
-                onCheckedChange = {
-                    val cmd = if (it) "plugin enable ${plugin.name}" else "plugin disable ${plugin.name}"
-                    vm.sendCommand(serverId, cmd)
+                onCheckedChange = { enable ->
+                    if (vm.togglePlugin(serverId, plugin.fileName, enable)) {
+                        onChanged()
+                    }
                 },
                 colors = SwitchDefaults.colors(
                     checkedTrackColor = ServerOnline,
@@ -139,16 +172,11 @@ fun PluginInstalledCard(plugin: PluginInfo, serverId: String, vm: MainViewModel)
                 )
             )
         }
-        if (plugin.description.isNotBlank()) {
+        if (!plugin.isEnabled) {
             Spacer(Modifier.height(4.dp))
-            Text(plugin.description,
-                style = MaterialTheme.typography.bodySmall,
+            Text("已禁用(文件重命名为 .jar.disabled,重启后生效)",
+                style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary)
-        }
-        if (!plugin.isLoaded) {
-            Spacer(Modifier.height(4.dp))
-            Text("插件未加载", style = MaterialTheme.typography.labelSmall,
-                color = ServerError)
         }
     }
 }

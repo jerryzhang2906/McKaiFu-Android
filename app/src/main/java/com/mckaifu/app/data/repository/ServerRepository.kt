@@ -27,9 +27,41 @@ class ServerRepository(private val context: Context) {
     private val _selectedServerId = MutableStateFlow<String?>(null)
     val selectedServerId: StateFlow<String?> = _selectedServerId.asStateFlow()
 
+    private val tasksFile = File(context.filesDir, "scheduled_tasks.json")
+    private val _scheduledTasks = MutableStateFlow<Map<String, List<ScheduledTask>>>(emptyMap())
+    val scheduledTasks: StateFlow<Map<String, List<ScheduledTask>>> = _scheduledTasks.asStateFlow()
+
     init {
         loadServers()
         loadSettings()
+        loadTasks()
+    }
+
+    private fun loadTasks() {
+        try {
+            if (tasksFile.exists()) {
+                val json = tasksFile.readText()
+                val type = object : TypeToken<Map<String, List<ScheduledTask>>>() {}.type
+                val map: Map<String, List<ScheduledTask>> = gson.fromJson(json, type) ?: emptyMap()
+                _scheduledTasks.value = map
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun saveTasks() {
+        try {
+            tasksFile.writeText(gson.toJson(_scheduledTasks.value))
+        } catch (_: Exception) {}
+    }
+
+    fun getTasks(serverId: String): List<ScheduledTask> =
+        _scheduledTasks.value[serverId] ?: emptyList()
+
+    fun saveTasks(serverId: String, tasks: List<ScheduledTask>) {
+        val map = _scheduledTasks.value.toMutableMap()
+        map[serverId] = tasks
+        _scheduledTasks.value = map
+        saveTasks()
     }
 
     fun setSelectedServerId(serverId: String) {

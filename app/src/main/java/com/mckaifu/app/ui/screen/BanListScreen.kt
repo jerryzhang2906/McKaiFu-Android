@@ -35,15 +35,11 @@ fun BanListScreen(serverId: String, navController: NavController, vm: MainViewMo
     var selectedTab by remember { mutableIntStateOf(0) }
     var showUnbanDialog by remember { mutableStateOf(false) }
     var selectedBan by remember { mutableStateOf<BanEntry?>(null) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
-    val playerBans = listOf(
-        BanEntry(name = "BadPlayer123", reason = "违规行为", source = "管理员", type = BanType.PLAYER),
-        BanEntry(name = "Griefer456", reason = "破坏建筑", source = "自动检测", type = BanType.PLAYER),
-    )
-    val ipBans = listOf(
-        BanEntry(ip = "192.168.1.100", reason = "恶意攻击", source = "系统", type = BanType.IP),
-        BanEntry(ip = "10.0.0.50", reason = "违规玩家关联IP", source = "系统", type = BanType.IP),
-    )
+    val bans = remember(serverId, refreshKey) { vm.getBans(serverId) }
+    val playerBans = bans.first
+    val ipBans = bans.second
 
     Scaffold(
         topBar = {
@@ -55,8 +51,8 @@ fun BanListScreen(serverId: String, navController: NavController, vm: MainViewMo
                     }
                 },
                 actions = {
-                    IconButton(onClick = { /* Add ban */ }) {
-                        Icon(Icons.Filled.PersonOff, "添加封禁")
+                    IconButton(onClick = { refreshKey++ }) {
+                        Icon(Icons.Filled.Refresh, "刷新")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
@@ -115,6 +111,7 @@ fun BanListScreen(serverId: String, navController: NavController, vm: MainViewMo
                         else "pardon-ip ${selectedBan!!.ip}"
                         vm.sendCommand(serverId, cmd)
                         showUnbanDialog = false
+                        refreshKey++
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ServerStarting)
                 ) { Text("解除") }

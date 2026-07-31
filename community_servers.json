@@ -1,0 +1,16 @@
+[
+  {
+    "name": "McKaiFu 官方演示服",
+    "core": "Paper 1.20.4",
+    "address": "demo.example.com:25565",
+    "online": 0,
+    "tag": "演示"
+  },
+  {
+    "name": "示例生存服",
+    "core": "Purpur 1.20.1",
+    "address": "survival.example.com:25566",
+    "online": 0,
+    "tag": "生存"
+  }
+]

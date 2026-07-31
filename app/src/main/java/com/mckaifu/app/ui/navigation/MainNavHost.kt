@@ -113,6 +113,10 @@ fun MainNavHost() {
     val vm: MainViewModel = viewModel()
     val selectedServerId by vm.selectedServerId.collectAsState()
 
+    LaunchedEffect(Unit) {
+        vm.startScheduler()
+    }
+
     val showBottomBar = currentDestination?.route in bottomNavItems.map { it.route } ||
             currentDestination?.route?.startsWith("console/") == true ||
             currentDestination?.route?.startsWith("players/") == true ||

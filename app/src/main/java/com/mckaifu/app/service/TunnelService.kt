@@ -27,27 +27,27 @@ class TunnelService {
     private val _status = MutableStateFlow(TunnelStatus())
     val status: kotlinx.coroutines.flow.StateFlow<TunnelStatus> = _status.asStateFlow()
 
-    fun startTunnel(tunnel: TunnelInfo, playitExecutable: File, onLog: (String) -> Unit) {
+    fun startTunnel(tunnel: TunnelInfo, executable: File, onLog: (String) -> Unit) {
         if (tunnelProcess?.isAlive == true) return
 
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
                 val commands = when (tunnel.type) {
                     TunnelType.PLAYIT -> listOf(
-                        playitExecutable.absolutePath,
+                        executable.absolutePath,
                         "--secret", tunnel.authToken,
                         "--port", tunnel.localPort.toString()
                     )
                     TunnelType.NGROK -> listOf(
-                        "ngrok", "tcp", tunnel.localPort.toString(),
+                        executable.absolutePath, "tcp", tunnel.localPort.toString(),
                         "--authtoken", tunnel.authToken
                     )
                     TunnelType.NATAPP -> listOf(
-                        "natapp", "-authtoken", tunnel.authToken,
+                        executable.absolutePath, "-authtoken", tunnel.authToken,
                         "-servername", tunnel.region.name.lowercase().ifEmpty { "auto" }
                     )
                     TunnelType.SAKURA -> listOf(
-                        "frpc", "-f", tunnel.authToken,
+                        executable.absolutePath, "-f", tunnel.authToken,
                         "-p", tunnel.region.name.lowercase().ifEmpty { "auto" }
                     )
                     else -> return@launch

@@ -3,9 +3,11 @@ package com.mckaifu.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Intent
 import android.os.Build
 import com.mckaifu.app.data.repository.ServerRepository
 import com.mckaifu.app.service.ServerEngine
+import com.mckaifu.app.service.TunnelService
 
 class McKaiFuApp : Application() {
 
@@ -15,11 +17,15 @@ class McKaiFuApp : Application() {
     lateinit var serverEngine: ServerEngine
         private set
 
+    lateinit var tunnelService: TunnelService
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         repository = ServerRepository(this)
         serverEngine = ServerEngine()
+        tunnelService = TunnelService()
         createNotificationChannels()
     }
 
@@ -39,7 +45,20 @@ class McKaiFuApp : Application() {
 
     override fun onTerminate() {
         serverEngine.shutdownAll()
+        tunnelService.stopTunnel()
         super.onTerminate()
+    }
+
+    fun startForegroundServiceCompat(intent: Intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    fun stopServiceCompat(intent: Intent) {
+        stopService(intent)
     }
 
     companion object {

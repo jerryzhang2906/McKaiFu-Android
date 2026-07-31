@@ -2,6 +2,7 @@
 
 import com.mckaifu.app.data.model.ConsoleMessage
 import com.mckaifu.app.data.model.LogType
+import com.mckaifu.app.data.model.PlayerInfo
 import com.mckaifu.app.data.model.ServerInstance
 import com.mckaifu.app.data.model.ServerStatus
 import kotlinx.coroutines.*
@@ -21,6 +22,9 @@ class ServerEngine {
 
     private val _serverStatuses = MutableStateFlow<Map<String, ServerStatus>>(emptyMap())
     val serverStatuses: StateFlow<Map<String, ServerStatus>> = _serverStatuses.asStateFlow()
+
+    private val _players = MutableStateFlow<Map<String, List<PlayerInfo>>>(emptyMap())
+    val players: StateFlow<Map<String, List<PlayerInfo>>> = _players.asStateFlow()
 
     val consoleOutput = MutableStateFlow<Map<String, List<ConsoleMessage>>>(emptyMap())
 
@@ -152,6 +156,7 @@ class ServerEngine {
                     ))
                 }
                 updateTps(server.id, cleanLine)
+                trackPlayers(server.id, cleanLine)
             }
         }
 
@@ -350,6 +355,7 @@ class ServerEngine {
                     }
 
                     updateTps(server.id, cleanLine)
+                    trackPlayers(server.id, cleanLine)
 
                 } catch (e: IOException) {
                     break
@@ -400,6 +406,7 @@ class ServerEngine {
         jobs[serverId]?.cancel()
         processes.remove(serverId)
         tpsTrackers.remove(serverId)
+        clearPlayers(serverId)
 
         updateStatus(serverId, ServerStatus.OFFLINE)
         onMessage(serverId, ConsoleMessage(content = "§c服务器已停止", type = LogType.WARN))
@@ -497,6 +504,71 @@ class ServerEngine {
             .trim()
     }
 
+    private val uuidOfPlayer = Regex("UUID of player (\\S+) is ([0-9a-fA-F-]{36})")
+    private val joinedGame = Regex("(\\S+) joined the game")
+    private val leftGame = Regex("(\\S+) left the game")
+    private val lostConnection = Regex("(\\S+) lost connection")
+    private val playersOnline = Regex("There are (\\d+) of a max of (\\d+) players online: ?(.*)")
+
+    private fun trackPlayers(serverId: String, line: String) {
+        val current = _players.value[serverId]?.toMutableList() ?: mutableListOf()
+        var changed = false
+
+        uuidOfPlayer.find(line)?.let { m ->
+            val name = m.groupValues[1]
+            val idx = current.indexOfFirst { it.name == name }
+            if (idx >= 0) {
+                current[idx] = current[idx].copy(uuid = m.groupValues[2])
+                changed = true
+            }
+        }
+
+        joinedGame.find(line)?.let { m ->
+            val name = m.groupValues[1]
+            if (name.startsWith("[")) return
+            if (current.none { it.name == name }) {
+                current.add(PlayerInfo(name = name, uuid = "", world = "world",
+                    health = 20.0, hunger = 20, ping = 0, serverId = serverId))
+                changed = true
+            }
+        }
+
+        leftGame.find(line)?.let { m ->
+            changed = current.removeAll { it.name == m.groupValues[1] } || changed
+        }
+
+        lostConnection.find(line)?.let { m ->
+            changed = current.removeAll { it.name == m.groupValues[1] } || changed
+        }
+
+        playersOnline.find(line)?.let { m ->
+            val names = m.groupValues[3]
+            val newList = if (names.isBlank()) emptyList() else names.split(", ").map { name ->
+                current.find { it.name == name } ?: PlayerInfo(name = name, serverId = serverId)
+            }
+            if (newList.map { it.name } != current.map { it.name }) {
+                val map = _players.value.toMutableMap()
+                map[serverId] = newList
+                _players.value = map
+            }
+            return
+        }
+
+        if (changed) {
+            val map = _players.value.toMutableMap()
+            map[serverId] = current
+            _players.value = map
+        }
+    }
+
+    private fun clearPlayers(serverId: String) {
+        if (_players.value.containsKey(serverId)) {
+            val map = _players.value.toMutableMap()
+            map[serverId] = emptyList()
+            _players.value = map
+        }
+    }
+
     private fun updateTps(serverId: String, line: String) {
         val tracker = tpsTrackers[serverId] ?: return
         val now = System.nanoTime()
@@ -529,6 +601,7 @@ class ServerEngine {
                 processes.remove(serverId)
                 jobs[serverId]?.cancel()
                 tpsTrackers.remove(serverId)
+                clearPlayers(serverId)
             } catch (_: InterruptedException) {}
         }
     }

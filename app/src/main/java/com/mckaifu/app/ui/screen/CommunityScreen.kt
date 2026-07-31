@@ -2,7 +2,14 @@
 
 package com.mckaifu.app.ui.screen
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.wifi.WifiManager
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.ExperimentalMaterial3Api
 
@@ -15,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -24,12 +32,41 @@ import com.mckaifu.app.data.model.ServerInstance
 import com.mckaifu.app.ui.component.*
 import com.mckaifu.app.ui.theme.*
 import com.mckaifu.app.viewmodel.MainViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CommunityScreen(serverId: String, navController: NavController, vm: MainViewModel = viewModel()) {
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
+    val context = LocalContext.current
+    var communityServers by remember { mutableStateOf(listOf<CommunityServer>()) }
+    var loadFailed by remember { mutableStateOf(false) }
+
+    val lanAddress = remember(server) {
+        server?.let { getLanAddress(context, it.port) } ?: ""
+    }
+
+    val scope = rememberCoroutineScope()
+
+    fun reloadCommunity() {
+        scope.launch {
+            communityServers = fetchCommunityServers()
+            loadFailed = communityServers.isEmpty()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        reloadCommunity()
+    }
+
+    fun copyToClipboard(text: String, label: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("server", text))
+        Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+    }
 
     Scaffold(
         topBar = {
@@ -41,7 +78,21 @@ fun CommunityScreen(serverId: String, navController: NavController, vm: MainView
                     }
                 },
                 actions = {
-                    IconButton(onClick = { /* Share server */ }) {
+                    IconButton(onClick = {
+                        server?.let {
+                            val text = buildString {
+                                append("${it.name}\n")
+                                append("${it.coreType.displayName} ${it.coreVersion}\n")
+                                if (lanAddress.isNotBlank()) append("地址: $lanAddress\n")
+                                if (it.tunnelEnabled) append("穿透: 通过内网穿透获取")
+                            }
+                            val share = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, text)
+                            }
+                            context.startActivity(Intent.createChooser(share, "分享服务器"))
+                        }
+                    }) {
                         Icon(Icons.Filled.Share, "分享")
                     }
                 }
@@ -71,8 +122,11 @@ fun CommunityScreen(serverId: String, navController: NavController, vm: MainView
                         InfoRow("服务器名称", it.name)
                         InfoRow("核心类型", "${it.coreType.displayName} ${it.coreVersion}")
                         InfoRow("端口", it.port.toString())
+                        if (lanAddress.isNotBlank()) {
+                            InfoRow("局域网地址", lanAddress, valueColor = ZalithPrimary)
+                        }
                         if (it.tunnelEnabled) {
-                            InfoRow("穿透地址", "通过内网穿透获取", valueColor = ZalithPrimary)
+                            InfoRow("穿透地址", "已开启，见内网穿透页", valueColor = ZalithPrimary)
                         }
                     }
                 }
@@ -84,37 +138,51 @@ fun CommunityScreen(serverId: String, navController: NavController, vm: MainView
 
             item {
                 ShareMethodCard(
-                    icon = Icons.Filled.QrCodeScanner,
-                    title = "二维码分享",
-                    description = "生成二维码，对方扫码即可看到服务器信息",
-                    onClick = { /* Generate QR */ }
-                )
-            }
-
-            item {
-                ShareMethodCard(
                     icon = Icons.Filled.ContentCopy,
                     title = "复制连接信息",
-                    description = "复制 IP:端口 等信息到剪贴板",
-                    onClick = { /* Copy to clipboard */ }
+                    description = "复制 服务器名 + 地址:端口 到剪贴板",
+                    onClick = {
+                        server?.let {
+                            copyToClipboard(
+                                "${it.name} - ${lanAddress.ifBlank { "${it.port}" }}",
+                                "已复制连接信息"
+                            )
+                        }
+                    }
                 )
             }
 
             item {
                 ShareMethodCard(
-                    icon = Icons.Filled.LocalOffer,
-                    title = "邀请码",
-                    description = "生成一次性邀请码，有效期内可使用",
-                    onClick = { /* Generate invite code */ }
+                    icon = Icons.Filled.IosShare,
+                    title = "系统分享",
+                    description = "通过微信、QQ 等应用发送服务器信息",
+                    onClick = {
+                        server?.let {
+                            val text = "${it.name} ${it.coreType.displayName} ${it.coreVersion}\n" +
+                                "地址: ${lanAddress.ifBlank { "端口 ${it.port}" }}"
+                            val share = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, text)
+                            }
+                            context.startActivity(Intent.createChooser(share, "分享服务器"))
+                        }
+                    }
                 )
             }
 
             item {
                 ShareMethodCard(
-                    icon = Icons.Filled.Groups,
-                    title = "社区发现",
-                    description = "将服务器发布到社区，让更多玩家发现",
-                    onClick = { /* Publish to community */ }
+                    icon = Icons.Filled.Wifi,
+                    title = "查看局域网地址",
+                    description = "同一 WiFi 下的玩家可直接连接",
+                    onClick = {
+                        if (lanAddress.isNotBlank()) {
+                            copyToClipboard(lanAddress, "已复制局域网地址")
+                        } else {
+                            Toast.makeText(context, "未连接到 WiFi", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 )
             }
 
@@ -126,24 +194,65 @@ fun CommunityScreen(serverId: String, navController: NavController, vm: MainView
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                Text("发现其他玩家分享的Minecraft服务器",
+                Text("发现其他玩家分享的Minecraft服务器(点击复制地址)",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary)
                 Spacer(Modifier.height(12.dp))
             }
 
-            val communityServers = listOf(
-                CommunityServer("生存服 #1", "Paper 1.20.4", "playing.xxx.com:25565", 45, "生存"),
-                CommunityServer("小游戏服", "Purpur 1.20.1", "mc.xxx.com:25566", 12, "小游戏"),
-                CommunityServer("模组生存", "Fabric 1.19.2", "mod.xxx.com:25565", 8, "模组"),
-            )
+            if (loadFailed) {
+                item {
+                    Text("社区列表加载失败(需联网)，点击重试",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        modifier = Modifier.clickable { reloadCommunity() })
+                }
+            }
 
             items(communityServers) { cs ->
-                CommunityServerCard(cs)
+                CommunityServerCard(
+                    cs = cs,
+                    onClick = { copyToClipboard(cs.address, "已复制 ${cs.name} 地址") }
+                )
             }
 
             item { Spacer(Modifier.height(32.dp)) }
         }
+    }
+}
+
+private suspend fun fetchCommunityServers(): List<CommunityServer> = withContext(Dispatchers.IO) {
+    try {
+        val url = java.net.URL(
+            "https://raw.githubusercontent.com/jerryzhang2906/McKaiFu-Android/master/community_servers.json"
+        )
+        val text = url.readText()
+        val array = org.json.JSONArray(text)
+        (0 until array.length()).mapNotNull { i ->
+            val obj = array.getJSONObject(i)
+            CommunityServer(
+                name = obj.optString("name"),
+                coreInfo = obj.optString("core"),
+                address = obj.optString("address"),
+                onlinePlayers = obj.optInt("online", 0),
+                tag = obj.optString("tag")
+            )
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+private fun getLanAddress(context: Context, port: Int): String {
+    return try {
+        val wifiManager = context.applicationContext
+            .getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val ip = wifiManager.connectionInfo?.ipAddress ?: return ""
+        if (ip == 0) return ""
+        val addr = "${ip and 0xFF}.${(ip shr 8) and 0xFF}.${(ip shr 16) and 0xFF}.${(ip shr 24) and 0xFF}"
+        "$addr:$port"
+    } catch (e: Exception) {
+        ""
     }
 }
 
@@ -186,7 +295,7 @@ data class CommunityServer(
 )
 
 @Composable
-fun CommunityServerCard(cs: CommunityServer) {
+fun CommunityServerCard(cs: CommunityServer, onClick: () -> Unit = {}) {
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -222,18 +331,13 @@ fun CommunityServerCard(cs: CommunityServer) {
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
-                onClick = { },
+                onClick = onClick,
                 modifier = Modifier.height(32.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = ZalithPrimary),
                 border = CardDefaults.outlinedCardBorder().copy(
                     brush = androidx.compose.ui.graphics.SolidColor(ZalithPrimary.copy(alpha = 0.5f))
                 )
-            ) { Text("连接", style = MaterialTheme.typography.labelSmall) }
-            OutlinedButton(
-                onClick = { },
-                modifier = Modifier.height(32.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
-            ) { Text("收藏", style = MaterialTheme.typography.labelSmall) }
+            ) { Text("复制地址", style = MaterialTheme.typography.labelSmall) }
         }
     }
 }

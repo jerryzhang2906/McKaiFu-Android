@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -31,28 +32,31 @@ import com.mckaifu.app.viewmodel.MainViewModel
 fun ConfigEditorScreen(serverId: String, navController: NavController, vm: MainViewModel = viewModel()) {
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
-    var selectedFile by remember { mutableStateOf("server.properties") }
+    var selectedFile by remember { mutableStateOf<String?>(null) }
     var config by remember { mutableStateOf(ServerConfig()) }
     var editedValues by remember { mutableStateOf(mapOf<String, String>()) }
+    var rawContent by remember { mutableStateOf("") }
     var showSaveSuccess by remember { mutableStateOf(false) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
-    val configFiles = listOf(
-        "server.properties", "bukkit.yml", "spigot.yml",
-        "paper.yml", "purpur.yml", "pufferfish.yml"
-    )
+    val configFiles = remember(serverId, refreshKey) { vm.listConfigFiles(serverId) }
 
-    LaunchedEffect(config) {
-        editedValues = config.serverProperties.toMap()
-    }
+    val selectedIsProperties = selectedFile?.endsWith(".properties") == true
 
-    val currentProperties = when (selectedFile) {
-        "server.properties" -> config.serverProperties
-        "bukkit.yml" -> config.bukkitConfig
-        "spigot.yml" -> config.spigotConfig
-        "paper.yml" -> config.paperConfig
-        "purpur.yml" -> config.purpurConfig
-        "pufferfish.yml" -> config.pufferfishConfig
-        else -> config.serverProperties
+    LaunchedEffect(selectedFile) {
+        val path = selectedFile ?: return@LaunchedEffect
+        val content = vm.readConfigFile(path) ?: return@LaunchedEffect
+        if (selectedIsProperties) {
+            val props = content.lines()
+                .filter { it.contains("=") && !it.trim().startsWith("#") }
+                .associate { line ->
+                    val idx = line.indexOf("=")
+                    line.substring(0, idx).trim() to line.substring(idx + 1).trim()
+                }
+            editedValues = props
+        } else {
+            rawContent = content
+        }
     }
 
     Scaffold(
@@ -91,50 +95,100 @@ fun ConfigEditorScreen(serverId: String, navController: NavController, vm: MainV
                 item {
                     SectionHeader("选择配置文件")
                     Spacer(Modifier.height(8.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.horizontalScroll(rememberScrollState())
-                    ) {
-                        configFiles.forEach { file ->
-                            FilterChip(
-                                selected = selectedFile == file,
-                                onClick = { selectedFile = file },
-                                label = { Text(file, style = MaterialTheme.typography.labelSmall) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = ZalithPrimary.copy(alpha = 0.2f),
-                                    selectedLabelColor = ZalithPrimary
+                    if (configFiles.isEmpty()) {
+                        Text("服务器目录下暂无可编辑的配置文件\n(启动服务器生成配置后会显示)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary)
+                    } else {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
+                        ) {
+                            configFiles.forEach { file ->
+                                FilterChip(
+                                    selected = selectedFile == file.path,
+                                    onClick = { selectedFile = file.path },
+                                    label = { Text(file.name, style = MaterialTheme.typography.labelSmall) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = ZalithPrimary.copy(alpha = 0.2f),
+                                        selectedLabelColor = ZalithPrimary
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                     Spacer(Modifier.height(16.dp))
                 }
 
-                item {
-                    SectionHeader("$selectedFile 配置项")
-                    Spacer(Modifier.height(8.dp))
-                }
+                if (selectedFile == null) {
+                    item {
+                        EmptyStateView(
+                            icon = Icons.Filled.Tune,
+                            title = "请选择配置文件",
+                            subtitle = "server.properties、bukkit.yml 等"
+                        )
+                    }
+                } else {
+                    val currentFile = selectedFile!!
+                    val currentIsProperties = currentFile.endsWith(".properties")
+                    if (currentIsProperties) {
+                        item {
+                            SectionHeader("${currentFile.substringAfterLast('/')} 配置项")
+                            Spacer(Modifier.height(8.dp))
+                        }
 
-                items(currentProperties.entries.toList(), key = { it.key }) { (key, value) ->
-                    PropertyEditorItem(
-                        key = key,
-                        value = editedValues[key] ?: value,
-                        onValueChange = { newVal ->
-                            editedValues = editedValues + (key to newVal)
-                        },
-                        configFile = selectedFile
-                    )
-                }
+                        items(editedValues.toList(), key = { it.first }) { (key, value) ->
+                            PropertyEditorItem(
+                                key = key,
+                                value = editedValues[key] ?: value,
+                                onValueChange = { newVal ->
+                                    editedValues = editedValues + (key to newVal)
+                                },
+                                configFile = currentFile.substringAfterLast('/')
+                            )
+                        }
 
-                item {
-                    Spacer(Modifier.height(24.dp))
-                    GradientButton(
-                        text = "保存配置",
-                        icon = Icons.Filled.Save,
-                        onClick = { showSaveSuccess = true },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(32.dp))
+                        item {
+                            Spacer(Modifier.height(24.dp))
+                            GradientButton(
+                                text = "保存配置",
+                                icon = Icons.Filled.Save,
+                                onClick = { showSaveSuccess = true },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(32.dp))
+                        }
+                    } else {
+                        item {
+                            SectionHeader("${currentFile.substringAfterLast('/')} (文本编辑)")
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        item {
+                            OutlinedTextField(
+                                value = rawContent,
+                                onValueChange = { rawContent = it },
+                                modifier = Modifier.fillMaxWidth().height(400.dp),
+                                textStyle = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    color = TextPrimary
+                                ),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = ZalithPrimary,
+                                    unfocusedBorderColor = ZalithCardBorder,
+                                    focusedContainerColor = ZalithSurfaceVariant.copy(alpha = 0.5f),
+                                    unfocusedContainerColor = ZalithSurfaceVariant.copy(alpha = 0.3f)
+                                )
+                            )
+                            Spacer(Modifier.height(24.dp))
+                            GradientButton(
+                                text = "保存配置",
+                                icon = Icons.Filled.Save,
+                                onClick = { showSaveSuccess = true },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(32.dp))
+                        }
+                    }
                 }
             }
         }
@@ -146,7 +200,21 @@ fun ConfigEditorScreen(serverId: String, navController: NavController, vm: MainV
             containerColor = ZalithSurface,
             icon = { Icon(Icons.Filled.CheckCircle, null, tint = ServerOnline, modifier = Modifier.size(32.dp)) },
             title = { Text("配置已保存") },
-            text = { Text("$selectedFile 配置已更新，重启服务器后生效。", color = TextSecondary) },
+            text = {
+                val path = selectedFile ?: ""
+                val saved = if (selectedIsProperties) {
+                    val sb = StringBuilder()
+                    editedValues.forEach { (k, v) -> sb.append("$k=$v\n") }
+                    vm.writeConfigFile(path, sb.toString())
+                } else {
+                    vm.writeConfigFile(path, rawContent)
+                }
+                if (saved) {
+                    Text("${selectedFile?.substringAfterLast('/') ?: ""} 已保存，重启服务器后生效。", color = TextSecondary)
+                } else {
+                    Text("保存失败，请重试。", color = ServerError)
+                }
+            },
             confirmButton = {
                 Button(onClick = { showSaveSuccess = false; navController.popBackStack() }) { Text("完成") }
             }

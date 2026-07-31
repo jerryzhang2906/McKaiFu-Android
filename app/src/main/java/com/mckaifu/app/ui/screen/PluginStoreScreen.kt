@@ -48,12 +48,8 @@ fun PluginStoreScreen(serverId: String, navController: NavController, vm: MainVi
         vm.getFeaturedPlugins()
     }
 
-    LaunchedEffect(storePlugins.isEmpty()) {
-        if (storePlugins.isEmpty()) {
-            showLoadError = false
-            delay(25000)
-            showLoadError = true
-        }
+    LaunchedEffect(storePlugins.isEmpty(), vm.downloadError.collectAsState().value) {
+        showLoadError = vm.downloadError.value != null
     }
 
     Scaffold(
@@ -139,13 +135,23 @@ fun PluginStoreScreen(serverId: String, navController: NavController, vm: MainVi
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                if (searchQuery.isBlank()) {
-                                    CircularProgressIndicator(color = ZalithPrimary)
-                                } else {
+                                if (showLoadError) {
+                                    Icon(Icons.Filled.CloudOff, null, tint = ServerError,
+                                        modifier = Modifier.size(40.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("加载失败，请检查网络", color = ServerError)
+                                    Spacer(Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { showLoadError = false; vm.getFeaturedPlugins() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = ZalithPrimary)
+                                    ) { Text("重试") }
+                                } else if (searchQuery.isNotBlank()) {
                                     Icon(Icons.Filled.SearchOff, null, tint = TextSecondary,
                                         modifier = Modifier.size(40.dp))
                                     Spacer(Modifier.height(8.dp))
                                     Text("未找到相关插件", color = TextSecondary)
+                                } else {
+                                    CircularProgressIndicator(color = ZalithPrimary)
                                 }
                             }
                         }

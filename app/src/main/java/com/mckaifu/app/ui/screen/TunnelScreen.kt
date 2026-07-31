@@ -27,6 +27,7 @@ import com.mckaifu.app.data.model.TunnelType
 import com.mckaifu.app.ui.component.*
 import com.mckaifu.app.ui.theme.*
 import com.mckaifu.app.viewmodel.MainViewModel
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,8 +36,22 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
     val server = servers.find { it.id == serverId }
     var tunnelInfo by remember { mutableStateOf(TunnelInfo(serverId = serverId)) }
     var showRegionDropdown by remember { mutableStateOf(false) }
+    var binaryPath by remember { mutableStateOf("") }
     var tunnelActive by remember { mutableStateOf(false) }
     var tunnelAddress by remember { mutableStateOf<String?>(null) }
+    var tunnelError by remember { mutableStateOf<String?>(null) }
+
+    val tunnelStatus by vm.tunnelService.status.collectAsState()
+
+    LaunchedEffect(tunnelStatus) {
+        tunnelActive = tunnelStatus.isActive
+        if (tunnelStatus.publicAddress.isNotBlank()) {
+            tunnelAddress = tunnelStatus.publicAddress
+        }
+        if (tunnelStatus.error.isNotBlank()) {
+            tunnelError = tunnelStatus.error
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -84,6 +99,11 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = ZalithPrimary,
                                 fontWeight = FontWeight.Medium)
+                        }
+                        if (tunnelError != null) {
+                            Text(tunnelError!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ServerError)
                         }
                     }
                 }
@@ -184,6 +204,35 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
                 }
             }
 
+            // Binary path
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Text("客户端程序路径", style = MaterialTheme.typography.labelLarge, color = TextSecondary)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = binaryPath,
+                    onValueChange = { binaryPath = it },
+                    placeholder = {
+                        Text(
+                            when (tunnelInfo.type) {
+                                TunnelType.PLAYIT -> "如 /sdcard/playit/playit"
+                                TunnelType.NGROK -> "如 /sdcard/ngrok/ngrok"
+                                TunnelType.NATAPP -> "如 /sdcard/natapp/natapp"
+                                TunnelType.SAKURA -> "如 /sdcard/frpc/frpc"
+                                TunnelType.CUSTOM -> "自定义命令"
+                            },
+                            color = TextSecondary
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = outFieldColors()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text("需自行下载对应平台的客户端可执行文件",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary)
+            }
+
             // Auth token
             GlassCard(modifier = Modifier.fillMaxWidth()) {
                 Text("认证令牌", style = MaterialTheme.typography.labelLarge, color = TextSecondary)
@@ -235,25 +284,22 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
 
             Button(
                 onClick = {
-                    tunnelActive = !tunnelActive
                     if (tunnelActive) {
-                        tunnelAddress = when (tunnelInfo.type) {
-                            TunnelType.PLAYIT -> "playit.gg:${tunnelInfo.localPort ?: server?.port ?: 25565}"
-                            TunnelType.NGROK -> "${tunnelInfo.region?.name?.lowercase() ?: "us"}.ngrok.io:${tunnelInfo.localPort ?: server?.port ?: 25565}"
-                            TunnelType.NATAPP -> "mckaifu.natappfree.cc:${tunnelInfo.localPort ?: server?.port ?: 25565}"
-                            TunnelType.SAKURA -> when (tunnelInfo.region) {
-                                TunnelRegion.CN_NORTH -> "bj.sakurafrp.com"
-                                TunnelRegion.CN_EAST -> "sh.sakurafrp.com"
-                                TunnelRegion.CN_SOUTH -> "gz.sakurafrp.com"
-                                TunnelRegion.CN_WEST -> "cd.sakurafrp.com"
-                                else -> "cn.sakurafrp.com"
-                            } + ":${tunnelInfo.localPort ?: server?.port ?: 25565}"
-                            TunnelType.CUSTOM -> "自定义地址"
-                        }
-                        server?.let { vm.updateServer(it.copy(tunnelEnabled = true)) }
-                    } else {
+                        vm.tunnelService.stopTunnel()
                         tunnelAddress = null
+                        tunnelError = null
                         server?.let { vm.updateServer(it.copy(tunnelEnabled = false)) }
+                    } else {
+                        tunnelError = null
+                        val executable = File(binaryPath)
+                        if (!executable.exists()) {
+                            tunnelError = "未找到客户端程序: $binaryPath"
+                        } else {
+                            vm.tunnelService.startTunnel(tunnelInfo, executable) { line ->
+                                android.util.Log.d("mckaifu-tunnel", line)
+                            }
+                            server?.let { vm.updateServer(it.copy(tunnelEnabled = true)) }
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(50.dp),

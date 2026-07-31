@@ -173,14 +173,46 @@ if (ignore && (tooOld || hasDash)) print warning(继续)
 
 ---
 
+## 六·二、全部功能真实化(2026-07-31 会话 2)
+
+把此前所有假数据/死代码接成真实功能,真机全部验证通过:
+
+| 功能 | 实现方式 |
+|---|---|
+| **玩家列表** | ServerEngine `trackPlayers()` 日志解析(join/left/lost/UUID/list 正则),`players` StateFlow 暴露;玩家管理/聊天页改 collect,不再有假 Steve |
+| **插件管理** | 读真实 `plugins/` 目录;开关 = 重命名 `.jar` ↔ `.jar.disabled`;刷新按钮 |
+| **封禁列表** | 解析 `banned-players.json` / `banned-ips.json`(JSONArray),解封后刷新 |
+| **世界管理** | 按 server.properties 的 level-name 扫描 world/_nether/_the_end 真实目录+大小;立即备份(BackupManager)、备份列表、恢复 |
+| **定时任务** | 持久化到 `scheduled_tasks.json`;MainViewModel.startScheduler() 每 30s 检查,执行重启/备份/命令/停止/启动;autoBackup 开关直接生效 |
+| **配置编辑器** | 扫描根目录+plugins/*/ 真实可编辑文件;.properties 键值编辑,其他文本编辑,真实读写 |
+| **内网穿透** | TunnelService 接真实进程(Playit/ngrok/natapp/frpc 二进制路径+token),日志解析公网地址,单例放 McKaiFuApp |
+| **前台服务** | startServer 时启动 ServerService(通知"x/y 个服务器在线"),全停后停止 |
+| **Geyser** | 创建/开关时真实下载 geyser-spigot jar + 写 config.yml |
+| **性能优化** | PerformanceOptimizer 真实分析 JVM 参数,设置页一键应用 |
+| **插件商店** | 去掉 25s 假超时;真实失败+重试按钮 |
+| **社区分享** | 局域网地址(WifiManager)、剪贴板复制、系统分享;社区列表从 `community_servers.json`(仓库 raw)拉取 |
+
+**修复的崩溃**: 控制台 LazyColumn key `timestamp_hashCode` 同毫秒重复 → `IllegalArgumentException: Key already used`。
+改为 `timestamp_hashCode_index` 唯一 key(ConsoleScreen.kt:204)。
+
+**验证结论**(真机): 服务器 Done 4.1s;控制台日志/命令/玩家追踪全通;前台服务 startForegroundCount=1;
+世界/配置/封禁/插件页均显示真实数据。
+
+**注意**: adb 无线调试会话会掉线(端口 5555 拒绝),重连方式:
+`adb connect 192.168.1.18:5555` 失败时需手机上重新开启"无线调试";`adb devices` 也可能直接显示 `90d69b9 device`。
+
+---
+
 ## 七、待办 / 已知问题
 
 - [ ] APK 构建缓存污染问题(195MB vs 40MB)未根治
 - [ ] oshi/JNA glibc 警告未消除(无害,可加白名单或忽略)
-- [ ] 内网穿透目前是 UI 模拟 + 调用户自备二进制,未真正打包 natapp/frpc
+- [ ] 内网穿透需用户自备二进制文件(playit/ngrok/natapp/frpc),未打包进 APK
 - [ ] `ensureRuntime` 的 release 文件补丁未验证(已由 IgnoreJavaVersion 绕过,可留)
 - [ ] 截图验证需用 cmd 重定向(`screencap -p`),PS 会坏文件
 - [ ] uiautomator dump 中文乱码: 读文件用 UTF8,或 GBK 转码技巧
+- [ ] 玩家追踪的 health/hunger/ping 等字段暂无数据源(只有名单),可后续接 RCON
+- [ ] CommunityScreen 社区列表依赖 GitHub raw 联网,离线时显示重试
 
 ---
 

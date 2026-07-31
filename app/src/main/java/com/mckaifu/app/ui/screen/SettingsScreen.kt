@@ -165,9 +165,57 @@ fun SettingsScreen(serverId: String, navController: NavController, vm: MainViewM
 
             SectionHeader("性能优化建议")
             GlassCard(modifier = Modifier.fillMaxWidth()) {
-                SuggestionItem(Icons.Filled.Speed, "使用 G1GC 垃圾回收器", "建议添加 -XX:+UseG1GC 到JVM参数", "高")
-                SuggestionItem(Icons.Filled.Memory, "Aikar's Flags", "推荐使用 Aikar 的 JVM 优化参数", "中")
-                SuggestionItem(Icons.Filled.Tune, "调整视距", "将视距调至 6-8 可改善性能", "中")
+                val suggestions = vm.getOptimizationSuggestions(serverId)
+                if (suggestions.isEmpty()) {
+                    Text("服务器配置已是最优",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ServerOnline)
+                } else {
+                    suggestions.forEach { suggestion ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.Speed, null, tint = ZalithPrimary, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(suggestion.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium)
+                                Text(suggestion.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary)
+                            }
+                            Surface(
+                                color = when (suggestion.impact) {
+                                    com.mckaifu.app.util.PerformanceOptimizer.ImpactLevel.HIGH -> ServerError.copy(alpha = 0.2f)
+                                    com.mckaifu.app.util.PerformanceOptimizer.ImpactLevel.MEDIUM -> ServerStarting.copy(alpha = 0.2f)
+                                    else -> ServerOnline.copy(alpha = 0.2f)
+                                },
+                                shape = MaterialTheme.shapes.extraSmall
+                            ) {
+                                Text(
+                                    when (suggestion.impact) {
+                                        com.mckaifu.app.util.PerformanceOptimizer.ImpactLevel.HIGH -> " 高 "
+                                        com.mckaifu.app.util.PerformanceOptimizer.ImpactLevel.MEDIUM -> " 中 "
+                                        else -> " 低 "
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = when (suggestion.impact) {
+                                        com.mckaifu.app.util.PerformanceOptimizer.ImpactLevel.HIGH -> ServerError
+                                        com.mckaifu.app.util.PerformanceOptimizer.ImpactLevel.MEDIUM -> ServerStarting
+                                        else -> ServerOnline
+                                    }
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = {
+                                vm.applySuggestion(serverId, suggestion)
+                                javaArgs = server?.javaArgs ?: ""
+                            }) { Text("应用", color = ZalithPrimary) }
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(32.dp))

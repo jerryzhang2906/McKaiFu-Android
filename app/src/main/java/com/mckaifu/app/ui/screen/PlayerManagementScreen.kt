@@ -33,7 +33,7 @@ import com.mckaifu.app.viewmodel.MainViewModel
 fun PlayerManagementScreen(serverId: String, navController: NavController, vm: MainViewModel = viewModel()) {
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
-    val players = vm.getPlayerInfo(serverId)
+    val players by vm.getPlayers(serverId).collectAsState()
     var showKickDialog by remember { mutableStateOf(false) }
     var showBanDialog by remember { mutableStateOf(false) }
     var selectedPlayer by remember { mutableStateOf<PlayerInfo?>(null) }

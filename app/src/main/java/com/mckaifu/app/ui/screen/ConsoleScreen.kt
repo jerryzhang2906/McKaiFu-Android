@@ -11,6 +11,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -201,7 +202,7 @@ fun ConsoleScreen(serverId: String, navController: NavController, vm: MainViewMo
                     modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
                     contentPadding = PaddingValues(vertical = 4.dp)
                 ) {
-                    items(filteredMessages, key = { "${it.timestamp}_${it.hashCode()}" }) { msg ->
+                    itemsIndexed(filteredMessages, key = { index, msg -> "${msg.timestamp}_${msg.hashCode()}_$index" }) { _, msg ->
                         ConsoleLine(msg)
                     }
                 }

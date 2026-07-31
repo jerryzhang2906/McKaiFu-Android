@@ -33,13 +33,12 @@ fun ScheduleScreen(serverId: String, navController: NavController, vm: MainViewM
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
     var showAddDialog by remember { mutableStateOf(false) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
-    val tasks = remember {
-        mutableStateListOf(
-            ScheduledTask(name = "每日重启", type = TaskType.RESTART, intervalHours = 24, isEnabled = true),
-            ScheduledTask(name = "备份世界", type = TaskType.BACKUP, intervalHours = 12, isEnabled = true),
-            ScheduledTask(name = "内存清理", type = TaskType.COMMAND, intervalHours = 6, isEnabled = false, command = "gc"),
-        )
+    val tasks = remember(serverId, refreshKey) { vm.getTasks(serverId).toMutableStateList() }
+
+    fun persist() {
+        vm.saveTasks(serverId, tasks.toList())
     }
 
     Scaffold(
@@ -92,14 +91,20 @@ fun ScheduleScreen(serverId: String, navController: NavController, vm: MainViewM
                             color = TextSecondary)
                     }
 
-                    items(tasks, key = { it.name }) { task ->
+                    items(tasks, key = { it.id }) { task ->
                         ScheduleTaskCard(
                             task = task,
                             onToggle = { enabled ->
                                 val idx = tasks.indexOf(task)
-                                if (idx >= 0) tasks[idx] = task.copy(isEnabled = enabled)
+                                if (idx >= 0) {
+                                    tasks[idx] = task.copy(isEnabled = enabled)
+                                    persist()
+                                }
                             },
-                            onDelete = { tasks.remove(task) }
+                            onDelete = {
+                                tasks.remove(task)
+                                persist()
+                            }
                         )
                     }
 
@@ -113,6 +118,7 @@ fun ScheduleScreen(serverId: String, navController: NavController, vm: MainViewM
         AddScheduleDialog(
             onConfirm = { newTask ->
                 tasks.add(newTask)
+                persist()
                 showAddDialog = false
             },
             onDismiss = { showAddDialog = false }

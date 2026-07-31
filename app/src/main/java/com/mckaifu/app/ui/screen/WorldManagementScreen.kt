@@ -33,14 +33,10 @@ import com.mckaifu.app.viewmodel.MainViewModel
 fun WorldManagementScreen(serverId: String, navController: NavController, vm: MainViewModel = viewModel()) {
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
-    val worlds = remember {
-        listOf(
-            WorldInfo(id = "overworld", name = "world", displayName = "主世界", gameMode = GameMode.SURVIVAL, difficulty = Difficulty.PEACEFUL),
-            WorldInfo(id = "nether", name = "world_nether", displayName = "下界", gameMode = GameMode.SURVIVAL, difficulty = Difficulty.PEACEFUL),
-            WorldInfo(id = "end", name = "world_the_end", displayName = "末地", gameMode = GameMode.SURVIVAL, difficulty = Difficulty.PEACEFUL),
-        )
-    }
+    val worlds = remember(serverId, refreshKey) { vm.listWorlds(serverId) }
+    val backups = remember(serverId, refreshKey) { vm.listBackups(serverId) }
 
     Scaffold(
         topBar = {
@@ -52,8 +48,8 @@ fun WorldManagementScreen(serverId: String, navController: NavController, vm: Ma
                     }
                 },
                 actions = {
-                    IconButton(onClick = { /* backup all */ }) {
-                        Icon(Icons.Filled.Backup, "备份所有")
+                    IconButton(onClick = { refreshKey++ }) {
+                        Icon(Icons.Filled.Refresh, "刷新")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
@@ -87,46 +83,87 @@ fun WorldManagementScreen(serverId: String, navController: NavController, vm: Ma
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        SmallActionChip(Icons.Filled.Upload, "上传世界", true, { }, ZalithPrimary)
-                        SmallActionChip(Icons.Filled.Download, "下载世界", true, { }, ZalithPrimary)
-                        SmallActionChip(Icons.Filled.Add, "创建世界", true, { }, ServerOnline)
+                        SmallActionChip(Icons.Filled.Backup, "立即备份", true, {
+                            vm.backupWorld(serverId)
+                            refreshKey++
+                        }, ZalithPrimary)
+                        SmallActionChip(Icons.Filled.Download, "下载世界", false, { }, ZalithPrimary)
+                        SmallActionChip(Icons.Filled.Add, "创建世界", false, { }, ServerOnline)
                     }
                 }
 
-                items(worlds) { world ->
-                    WorldCard(world, serverId, vm)
+                if (worlds.isEmpty()) {
+                    item {
+                        EmptyStateView(
+                            icon = Icons.Filled.Public,
+                            title = "暂无世界",
+                            subtitle = "启动服务器生成世界后,将在这里显示"
+                        )
+                    }
+                } else {
+                    items(worlds) { world ->
+                        WorldCard(world, serverId, vm)
+                    }
                 }
 
                 item {
                     SectionHeader("备份管理")
                     Spacer(Modifier.height(8.dp))
                     GlassCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text("自动备份", fontWeight = FontWeight.Bold)
-                                Text(
-                                    if (server?.autoBackup == true) "每${server?.backupIntervalHours ?: 24}小时"
-                                    else "已关闭",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("自动备份", fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (server?.autoBackup == true) "每${server?.backupIntervalHours ?: 24}小时"
+                                        else "已关闭",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary
+                                    )
+                                }
+                                Switch(
+                                    checked = server?.autoBackup ?: false,
+                                    onCheckedChange = {
+                                        server?.let { s ->
+                                            vm.updateServer(s.copy(autoBackup = it))
+                                        }
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedTrackColor = ZalithPrimary,
+                                        checkedThumbColor = Color.White
+                                    )
                                 )
                             }
-                            Switch(
-                                checked = server?.autoBackup ?: false,
-                                onCheckedChange = {
-                                    server?.let { s ->
-                                        vm.updateServer(s.copy(autoBackup = it))
+                            if (backups.isEmpty()) {
+                                Text("暂无备份",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary)
+                            } else {
+                                backups.take(5).forEach { backup ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(backup.fileName,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium)
+                                            Text(formatFileSize(backup.sizeBytes),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = TextSecondary)
+                                        }
+                                        TextButton(onClick = {
+                                            vm.restoreBackup(serverId, backup.fileName)
+                                            refreshKey++
+                                        }) { Text("恢复", color = ServerStarting) }
                                     }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = ZalithPrimary,
-                                    checkedThumbColor = Color.White
-                                )
-                            )
+                                }
+                            }
                         }
                     }
                 }

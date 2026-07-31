@@ -39,7 +39,7 @@ fun ChatScreen(serverId: String, navController: NavController, vm: MainViewModel
     val server = servers.find { it.id == serverId }
     val messages by vm.getConsoleMessages(serverId).collectAsState()
     val chatMessages = messages.filter { it.type == LogType.CHAT }
-    val players = vm.getPlayerInfo(serverId)
+    val players by vm.getPlayers(serverId).collectAsState()
 
     var selectedPlayer by remember { mutableStateOf<PlayerInfo?>(null) }
     var messageText by remember { mutableStateOf("") }
