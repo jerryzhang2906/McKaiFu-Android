@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">McKaiFu 开服大师</string>
+    <string name="tab_servers">服务器</string>
+    <string name="tab_console">控制台</string>
+    <string name="tab_players">玩家</string>
+    <string name="tab_worlds">世界</string>
+    <string name="tab_settings">设置</string>
+    <string name="server_start">启动</string>
+    <string name="server_stop">停止</string>
+    <string name="server_restart">重启</string>
+    <string name="server_status_online">在线</string>
+    <string name="server_status_offline">离线</string>
+    <string name="server_status_starting">启动中</string>
+    <string name="server_status_stopping">停止中</string>
+    <string name="btn_create_server">创建服务器</string>
+    <string name="btn_upload_jar">上传JAR</string>
+    <string name="btn_select_core">选择核心</string>
+    <string name="console_input_hint">输入命令...</string>
+    <string name="player_kick">踢出</string>
+    <string name="player_ban">封禁</string>
+    <string name="player_op">OP</string>
+    <string name="player_whitelist">白名单</string>
+    <string name="world_create">创建世界</string>
+    <string name="world_upload">上传世界</string>
+    <string name="world_download">下载世界</string>
+    <string name="world_backup">备份</string>
+    <string name="settings_memory">内存分配</string>
+    <string name="settings_tunnel">内网穿透</string>
+    <string name="settings_schedule">定时任务</string>
+    <string name="settings_performance">性能调优</string>
+    <string name="file_manager">文件管理</string>
+    <string name="plugin_manager">插件管理</string>
+    <string name="web_map">Web地图</string>
+    <string name="performance_dashboard">性能仪表盘</string>
+    <string name="notification_channel_server">服务器状态</string>
+</resources>

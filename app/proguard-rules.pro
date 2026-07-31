@@ -1,0 +1,5 @@
+-keep class com.mckaifu.app.data.** { *; }
+-keep class com.mckaifu.app.service.** { *; }
+-keepclassmembers class * implements java.io.Serializable { *; }
+-keep class com.jcraft.jsch.** { *; }
+-dontwarn com.jcraft.jsch.**
