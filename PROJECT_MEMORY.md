@@ -1,7 +1,7 @@
 # McKaiFu 项目记忆 (Project Memory)
 
 > 本文档记录项目的目标、架构、关键进展、踩坑经验、验证方法和当前状态，
-> 供后续会话快速恢复上下文。最后更新 2026-08-01 (会话11: JRE 21/25 bionic 缺失修复 + 真机 1.21.11 验证通过)
+> 供后续会话快速恢复上下文。最后更新 2026-08-01 (视频制作进行中: 脚本已完成 docs/video_script.md, 录屏工具就绪)
 
 ---
 
@@ -530,6 +530,46 @@ PocketMine 20 个版本 mcVersion 全是"基岩版"、buildNumber 全 0 → **ke
   模拟器验证需先开启 MuMu 的 adb 调试(设置→adb调试)或用真机。真机为 arm64,比模拟器(ARM 翻译层)更可靠。
 - D 盘 `OpenJDK*U-jre_aarch64_linux_hotspot_*.tar.gz` 均为 **glibc 版,不可用**。
 - Amethyst APK 运行时 JRE 下载源逻辑在 `NewJREUtil.java` 的 `getJreSource()`。
+
+
+
+
+---
+
+## 六·十二、视频宣传制作 (2026-08-01, 进行中)
+
+### 1. 用户需求
+- 目标平台 B站,横屏 16:9,2-3 分钟,**纯 BGM + 全屏大字幕,无口播/无配音**
+- 风格: 前半段"装X/对比"抓人,中段"功能快剪"节奏拉满,结尾落地 GitHub 链接
+- 用户选择: **对比装X向 + 功能介绍快剪**
+
+### 2. 已完成
+- **脚本**: `docs/video_script.md`(4 幕时间轴分镜 + 14 个录屏镜头 A-N + 剪辑/BGM/发布文案建议)
+- **工具**: `D:\mckaifu_video\rec.py`(adb 录屏驱动工具: tap/swipe/text/screenshot/record)
+- **环境**: 真机 90d69b9(小米,arm64)横屏已锁定(2880x1800);uiautomator dump 可用;
+  首页 UI 坐标已摸清(创建服务器按钮~2810,200;1.21.11 卡启动~160,966;底部导航: 服务器280/控制台860/玩家1413/世界1993/设置2573, y=1660)
+- **App 状态**: 已装 1.20.4(我的服务器) + 1.21.11(Test 1.21.11)两个服务器,均已配好可启动
+
+### 3. 遇到的问题 (录屏)
+- `adb shell screenrecord` 直接跑 OK;rec.py 的 Popen 方式跑出的文件 0 字节显示(实际 27-30KB 有内容)。
+- 现象: rec.record 里 `rec` 局部变量会遮蔽模块名 → actions() 里 `rec.swipe` 可能引用错对象。
+  需改用 `as recmod` 或全局引用。**注意**: a_home.mp4 / a2.mp4 实际已生成(见 clips 目录)。
+- screenrecord 用 `--time-limit N` 自动结束,wait(timeout) 后 pull。
+
+### 4. 待办 (下次继续)
+- [ ] 修复 rec.py 的 rec 遮蔽 bug,重新录制全部镜头 A-N(参考 docs/video_script.md 的"素材拍摄清单")
+- [ ] 下载 ffmpeg 到 D:\mckaifu_video(不放 C 盘)。线索: gyan.dev 慢;华为云镜像 ffmpeg 目录重定向;
+      BtbN GitHub release 可达 (ffmpeg-master-latest-win64-gpl.zip 169MB, HEAD 200 1.1s);
+      winget 有 Gyan.FFmpeg 8.1.2 / BtbN 系列(但默认装 C 盘,需指定 D 盘或用 zip 解压)
+- [ ] 剪辑: ffmpeg 拼接分镜 + 加全屏字幕 + BGM(需无版权 BGM 素材)
+- [ ] 导出成片交付
+
+### 5. 关键坐标备忘 (2880x1800 横屏)
+- 首页顶栏: "创建服务器" 按钮 center ~ (2810,200)
+- 服务器卡片 1.21.11 (Test 1.21.11): 卡片区 [40,764][2840,1046], 启动按钮 center ~ (160,966)
+- 底部导航 (y≈1660): 服务器280 / 控制台860 / 玩家1413 / 世界1993 / 设置2573
+- UI dump 法: `adb shell uiautomator dump /sdcard/ui.xml` + `cat`(Compuose 可点节点 content-desc 有中文标签)
+- 录屏: 横屏锁 `settings put system accelerometer_rotation 0; settings put system user_rotation 1`
 
 
 ## 七、待办 / 已知问题
