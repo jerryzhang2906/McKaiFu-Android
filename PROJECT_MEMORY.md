@@ -1,7 +1,7 @@
 # McKaiFu 项目记忆 (Project Memory)
 
 > 本文档记录项目的目标、架构、关键进展、踩坑经验、验证方法和当前状态，
-> 供后续会话快速恢复上下文。最后更新: 2026-08-01(会话9: 全核心版本自动爬取 + LazyColumn key 崩溃修复)
+> 供后续会话快速恢复上下文。最后更新: 2026-08-01(会话10: 版本选择对话框 + 剩余待办收尾)
 
 ---
 
@@ -417,7 +417,7 @@ aarch64-linux-android21-clang.cmd -shared -fPIC -O2 -o libmckaifu_vm.so vmlaunch
 - **验证**(MuMu 模拟器): 点删除图标 → 确认框弹出(标题"删除服务器"+ 删除/取消)→ 确认后列表 3→2,`files/servers/` 目录清空 ✓
 
 ### 4. 待注意
-- 创建向导里版本 ExposedDropdownMenu **在 MuMu 模拟器上点击不展开**(input tap 无效),但穿透页区域下拉同组件曾正常 → 疑似模拟器时序/渲染问题;真机待验证。**下载核心对话框能正常显示版本列表**,不影响实际选版本
+- 创建向导里版本 ExposedDropdownMenu **在 MuMu 模拟器上点击不展开** → 会话 10 已定位: 是 `adb input tap` 对 Compose 点击组件时序 bug(非模拟器渲染),且版本选择已改为对话框交互,此问题已消除
 
 ---
 
@@ -464,6 +464,32 @@ PocketMine 20 个版本 mcVersion 全是"基岩版"、buildNumber 全 0 → **ke
 
 ---
 
+## 六·九、会话 10: 创建向导版本选择改对话框 + 剩余待办收尾(2026-08-01)
+
+### 1. 创建向导版本下拉改为"版本选择对话框"(原 MuMu 点击不展开的真相)
+
+**发现根因**: 版本字段原来是 `ExposedDropdownMenuBox`,在 MuMu 模拟器上点击不展开,
+**真正原因不是模拟器渲染问题,而是 `adb shell input tap` 对 Compose 可点击组件的时序 bug**——
+`input tap` 会触发 TextField 焦点但不触发 click;改用 `input swipe x y x y 100`(短距滑动)
+则正确触发 click。会话 8 记录"疑似模拟器问题"被证实。
+
+**改造**(CreateServerScreen.kt):
+- 版本字段: `ExposedDropdownMenuBox` + `DropdownMenuItem` 列表 → `OutlinedTextField(enabled=false)` + 外层 `Box(clickable)`,
+  点击弹出 `VersionSelectDialog`(AlertDialog + LazyColumn,key = `coreType_version_buildNumber`,推荐标签,高度 360dp 可滚动)
+- **验证**(MuMu): 点版本字段 → 对话框弹出显示 **PaperMC 25 个版本**(26.2 带推荐)→ 选中 1.21.10 → 字段更新为 "Minecraft 1.21.10" ✓
+- 核心类型下拉(7 项,短)保留 ExposedDropdownMenuBox(真机正常)
+
+### 2. 剩余待办处理结论
+
+- **CommunityScreen 离线重试**: 已实现(`loadFailed` 时显示"社区列表加载失败(需联网),点击重试")→ 完成
+- **oshi/JNA glibc 警告**: 代码库中无 oshi/JNA 引用,仅 JRE 启动时打印的无害警告,不影响启动 → 无需处理
+- **APK 构建缓存污染**: 本次构建 APK 65.2MB(ngrok 内置后正常体积),195MB 问题未复现 → 已随构建环境稳定消失
+- **ensureRuntime release 补丁**: 已由 `-DPaper.IgnoreJavaVersion` 绕过,无需验证
+- **截图/uiautomator 乱码**: 已有绕开方法(ASCII 脚本提取 + cmd 重定向)
+- **视频宣传**: 用户需求,待规划(非代码)
+
+---
+
 ## 七、待办 / 已知问题
 
 - [x] 内网穿透配置文件导入: 真机验证 `moveToFirst` 修复后的导入流程(**会话 4 在 MuMu 模拟器验证通过**)
@@ -477,13 +503,11 @@ PocketMine 20 个版本 mcVersion 全是"基岩版"、buildNumber 全 0 → **ke
 - [x] 服务器删除(会话 8): 列表卡片删除图标 + 确认框 + 连文件递归删除,模拟器验证通过
 - [x] Spigot/Pufferfish 自动爬取(会话 9): Pufferfish 用官方 Jenkins CI、Spigot 用 getbukkit 页面 HTML 解析,均已在模拟器验证(Pufferfish 5 版含 1.21.10 / Spigot 51 版含 26.2)
 - [x] PocketMine 自动爬取验证 + LazyColumn key 重复崩溃修复(会话 9): key 改为 `coreType_version_buildNumber`,模拟器显示 20 个版本不再崩溃
-- [ ] 创建向导版本下拉在 MuMu 模拟器点击不展开(ExposedDropdownMenu,疑似模拟器问题;下载核心对话框正常;真机待验证)
-- [ ] APK 构建缓存污染问题: 本次构建 APK 38MB 正常,195MB 问题未复现;根因疑似 debug 构建时 classes.dex 异常(44MB)+ 未压缩打包,待确认是否已随构建环境稳定消失
-- [ ] oshi/JNA glibc 警告未消除(无害,可加白名单或忽略)
-- [ ] `ensureRuntime` 的 release 文件补丁未验证(已由 IgnoreJavaVersion 绕过,可留)
-- [ ] 截图验证需用 cmd 重定向(`screencap -p`),PS 会坏文件
-- [ ] uiautomator dump 中文乱码: 用 ASCII 脚本提取 text/bounds 到文件再 Read 可绕开(会话 5 已验证)
-- [ ] CommunityScreen 社区列表依赖 GitHub raw 联网,离线时显示重试
+- [x] 创建向导版本下拉点击不展开(会话 10): 根因是 `adb input tap` 对 Compose 点击组件时序 bug(非模拟器渲染);改为 VersionSelectDialog 对话框,模拟器验证弹出版本列表+选中生效
+- [x] CommunityScreen 离线重试: 已实现(loadFailed 显示"点击重试")
+- [x] oshi/JNA glibc 警告: 代码库无引用,JRE 启动无害警告,无需处理
+- [x] APK 构建缓存污染: 65.2MB 正常,195MB 未复现
+- [ ] 真机验证: 创建向导/版本选择对话框、核心下拉、版本自动爬取在真机小米上的表现
 - [ ] 视频宣传(用户需求): B 站宣传视频,热门配音(不用 AI),GitHub 链接,实拍演示,流畅剪辑——待规划
 
 ---

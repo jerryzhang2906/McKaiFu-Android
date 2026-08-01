@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.ExperimentalMaterial3Api
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -290,47 +293,39 @@ fun StepBasicInfo(
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Text("Minecraft版本", style = MaterialTheme.typography.labelLarge, color = TextSecondary)
             Spacer(Modifier.height(4.dp))
-            ExposedDropdownMenuBox(
-                expanded = showVersionDropdown,
-                onExpandedChange = onVersionDropdownToggle
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onVersionDropdownToggle(true) }
             ) {
                 OutlinedTextField(
                     value = formatMcVersion(selectedMcVersion, coreType),
                     onValueChange = {},
                     readOnly = true,
+                    enabled = false,
                     leadingIcon = { Icon(Icons.Filled.Tag, null, tint = ZalithPrimary) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showVersionDropdown) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    colors = outFieldColors()
+                    trailingIcon = { Icon(Icons.Filled.ExpandMore, null, tint = TextSecondary) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = outFieldColors().copy(
+                        disabledContainerColor = ZalithSurfaceVariant.copy(alpha = 0.3f),
+                        disabledTextColor = TextPrimary,
+                        disabledTrailingIconColor = TextSecondary
+                    )
                 )
-                ExposedDropdownMenu(
-                    expanded = showVersionDropdown,
-                    onDismissRequest = { onVersionDropdownToggle(false) }
-                ) {
-                    versions.forEach { ver ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(formatMcVersion(ver.mcVersion, coreType))
-                                    if (ver.isRecommended) {
-                                        Spacer(Modifier.width(8.dp))
-                                        Surface(color = ServerOnline.copy(alpha = 0.2f),
-                                            shape = MaterialTheme.shapes.extraSmall) {
-                                            Text("推荐", modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                                                style = MaterialTheme.typography.labelSmall, color = ServerOnline)
-                                        }
-                                    }
-                                }
-                            },
-                            onClick = {
-                                onVersionChange(ver.mcVersion)
-                                onVersionDropdownToggle(false)
-                            }
-                        )
-                    }
-                }
             }
         }
+    }
+
+    if (showVersionDropdown) {
+        VersionSelectDialog(
+            coreType = coreType,
+            versions = versions,
+            onSelect = { ver ->
+                onVersionChange(ver.mcVersion)
+                onVersionDropdownToggle(false)
+            },
+            onDismiss = { onVersionDropdownToggle(false) }
+        )
     }
 
     if (coreType != CoreType.CUSTOM) {
@@ -585,3 +580,56 @@ fun outFieldColors() = OutlinedTextFieldDefaults.colors(
     errorTextColor = ServerError,
     errorBorderColor = ServerError
 )
+
+@Composable
+fun VersionSelectDialog(
+    coreType: CoreType,
+    versions: List<CoreVersion>,
+    onSelect: (CoreVersion) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ZalithSurface,
+        title = { Text("选择版本", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text("${coreType.displayName} 共 ${versions.size} 个版本",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary)
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().height(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(versions, key = { "${it.coreType}_${it.version}_${it.buildNumber}" }) { ver ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { onSelect(ver) },
+                            color = Color.Transparent,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(formatMcVersion(ver.mcVersion, coreType),
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f))
+                                if (ver.isRecommended) {
+                                    Surface(color = ServerOnline.copy(alpha = 0.2f),
+                                        shape = MaterialTheme.shapes.extraSmall) {
+                                        Text("推荐", modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                            style = MaterialTheme.typography.labelSmall, color = ServerOnline)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
