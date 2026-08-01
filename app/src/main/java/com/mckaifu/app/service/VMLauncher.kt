@@ -8,6 +8,12 @@ object VMLauncher {
 
     external fun launchJVM(args: Array<String>): Int
 
+    external fun launchJvmChild(args: Array<String>, inFd: Int, outFd: Int): Int
+
+    external fun isProcessAlive(pid: Int): Boolean
+
+    external fun killProcess(pid: Int, sig: Int): Int
+
     external fun dlopen(path: String, global: Boolean): Boolean
 
     external fun createPipe(): IntArray?

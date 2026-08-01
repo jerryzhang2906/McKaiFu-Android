@@ -27,6 +27,7 @@ import com.mckaifu.app.ui.component.*
 import com.mckaifu.app.ui.navigation.Screen
 import com.mckaifu.app.ui.theme.*
 import com.mckaifu.app.viewmodel.MainViewModel
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +42,13 @@ fun PlayerManagementScreen(serverId: String, navController: NavController, vm: M
     var showChatWindow by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
 
+    LaunchedEffect(serverId) {
+        while (true) {
+            vm.refreshPlayersViaRcon(serverId)
+            delay(4000)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -51,6 +59,9 @@ fun PlayerManagementScreen(serverId: String, navController: NavController, vm: M
                     }
                 },
                 actions = {
+                    IconButton(onClick = { vm.refreshPlayersViaRcon(serverId) }) {
+                        Icon(Icons.Filled.Refresh, "刷新玩家数据")
+                    }
                     IconButton(onClick = {
                         navController.navigate(Screen.Chat.createRoute(serverId))
                     }) {
@@ -71,7 +82,7 @@ fun PlayerManagementScreen(serverId: String, navController: NavController, vm: M
                 EmptyStateView(
                     icon = Icons.Filled.PeopleOutline,
                     title = "暂无在线玩家",
-                    subtitle = "启动服务器后玩家加入将显示在此"
+                    subtitle = "启动服务器后玩家加入将显示在此(生命/饥饿/经验等数据通过 RCON 实时获取)"
                 )
             } else {
                 TabRow(
@@ -211,7 +222,8 @@ fun PlayerCard(
                 Column {
                     Text(player.name, fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleSmall)
-                    Text("Ping: ${player.ping}ms | ${player.world}",
+                    Text(
+                        "${player.world} · ${player.position.x.toInt()}, ${player.position.y.toInt()}, ${player.position.z.toInt()}",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary)
                 }
@@ -280,14 +292,14 @@ fun PlayerCard(
                 tint = ZalithSecondary, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
             LinearProgressIndicator(
-                progress = (player.xp % 1).toFloat(),
+                progress = (player.xp % 100) / 100f,
                 modifier = Modifier.weight(1f).height(6.dp)
                     .background(ZalithCardBorder, MaterialTheme.shapes.extraSmall),
                 color = ZalithSecondary,
                 trackColor = Color.Transparent
             )
             Spacer(Modifier.width(8.dp))
-            Text("Lv ${player.xp.toInt()}",
+            Text("Lv ${player.level}",
                 style = MaterialTheme.typography.bodySmall, color = TextSecondary)
         }
 

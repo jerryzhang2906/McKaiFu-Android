@@ -16,9 +16,11 @@ class ServerEngine {
 
     private val processes = ConcurrentHashMap<String, Process>()
     private val bionicThreads = ConcurrentHashMap<String, Thread>()
+    private val childPids = ConcurrentHashMap<String, Int>()
     private val stdinFds = ConcurrentHashMap<String, Int>()
     private val tpsTrackers = ConcurrentHashMap<String, TpsTracker>()
     private val jobs = ConcurrentHashMap<String, Job>()
+    private val rconConfigs = ConcurrentHashMap<String, RconPlayerProvider.RconConfig>()
 
     private val _serverStatuses = MutableStateFlow<Map<String, ServerStatus>>(emptyMap())
     val serverStatuses: StateFlow<Map<String, ServerStatus>> = _serverStatuses.asStateFlow()
@@ -67,6 +69,7 @@ class ServerEngine {
             }
 
             ensureEulaAccepted(serverDir)
+            rconConfigs[server.id] = RconPlayerProvider.ensureRcon(serverDir)
 
             if (isBionicJre(java)) {
                 startServerBionic(server, serverDir, java, jarFile, onMessage)
@@ -160,23 +163,25 @@ class ServerEngine {
             }
         }
 
-        VMLauncher.setStdio(inReadFd, outWriteFd)
         VMLauncher.chdir(serverDir.absolutePath)
 
-        val thread = Thread({
-            android.util.Log.e("mcserver", "launchJVM start")
-            val code = VMLauncher.launchJVM(args.toTypedArray())
-            android.util.Log.e("mcserver", "launchJVM returned code=$code")
-            if (code != 0) {
-                onMessage(server.id, ConsoleMessage(
-                    content = "JVM 退出，退出码: $code",
-                    type = LogType.ERROR
-                ))
-            }
-        }, "server-jvm-${server.id}")
-        thread.start()
-        bionicThreads[server.id] = thread
+        val pid = VMLauncher.launchJvmChild(args.toTypedArray(), inReadFd, outWriteFd)
+        if (pid <= 0) {
+            android.util.Log.e("mcserver", "launchJvmChild failed pid=$pid")
+            onMessage(server.id, ConsoleMessage(
+                content = "JVM 子进程启动失败(fork 失败)",
+                type = LogType.ERROR
+            ))
+            updateStatus(server.id, ServerStatus.ERROR)
+            try { VMLauncher.closeFd(outWriteFd) } catch (_: Exception) {}
+            try { VMLauncher.closeFd(inFd) } catch (_: Exception) {}
+            try { VMLauncher.closeFd(outFd) } catch (_: Exception) {}
+            try { VMLauncher.closeFd(inReadFd) } catch (_: Exception) {}
+            return
+        }
+        android.util.Log.e("mcserver", "forked JVM child pid=$pid")
         stdinFds[server.id] = inFd
+        childPids[server.id] = pid
 
         val tpsTracker = TpsTracker()
         tpsTrackers[server.id] = tpsTracker
@@ -214,7 +219,7 @@ class ServerEngine {
         }
         jobs[server.id] = job
 
-        launchWatchdogBionic(server.id, thread, onMessage)
+        launchWatchdogBionic(server.id, onMessage)
     }
 
     private fun loadJreLibraries(jreHome: String): Boolean {
@@ -255,26 +260,36 @@ class ServerEngine {
         return criticalOk
     }
 
-    private fun launchWatchdogBionic(serverId: String, thread: Thread, onMessage: (String, ConsoleMessage) -> Unit) {
+    private fun launchWatchdogBionic(serverId: String, onMessage: (String, ConsoleMessage) -> Unit) {
         GlobalScope.launch(Dispatchers.IO) {
             try {
-                thread.join()
-                VMLauncher.restoreStdio()
-                if (_serverStatuses.value[serverId] != ServerStatus.STOPPING) {
+                val pid = childPids[serverId]
+                while (isActive && pid != null && VMLauncher.isProcessAlive(pid)) {
+                    delay(1000)
+                }
+                if (_serverStatuses.value[serverId] != ServerStatus.STOPPING &&
+                    _serverStatuses.value[serverId] != ServerStatus.RESTARTING
+                ) {
                     onMessage(serverId, ConsoleMessage(
                         content = "§c服务器进程异常退出",
                         type = LogType.ERROR
                     ))
                     updateStatus(serverId, ServerStatus.ERROR)
                 }
-            } catch (_: InterruptedException) {
+            } catch (_: Exception) {
             } finally {
-                bionicThreads.remove(serverId)
+                childPids.remove(serverId)
                 stdinFds.remove(serverId)?.let { fd ->
                     try { VMLauncher.closeFd(fd) } catch (_: Exception) {}
                 }
                 jobs[serverId]?.cancel()
                 tpsTrackers.remove(serverId)
+                clearPlayers(serverId)
+                if (_serverStatuses.value[serverId] == ServerStatus.STOPPING ||
+                    _serverStatuses.value[serverId] == ServerStatus.RESTARTING
+                ) {
+                    updateStatus(serverId, ServerStatus.OFFLINE)
+                }
             }
         }
     }
@@ -368,7 +383,11 @@ class ServerEngine {
     }
 
     fun stopServer(serverId: String, onMessage: (String, ConsoleMessage) -> Unit) {
-        if (!isRunning(serverId)) return
+        if (!isRunning(serverId)) {
+            cleanupServer(serverId)
+            updateStatus(serverId, ServerStatus.OFFLINE)
+            return
+        }
         updateStatus(serverId, ServerStatus.STOPPING)
         onMessage(serverId, ConsoleMessage(content = "正在停止服务器...", type = LogType.WARN))
 
@@ -392,24 +411,43 @@ class ServerEngine {
             } catch (_: Exception) {}
         }
 
-        if (bionicThreads[serverId] != null) return
-
-        GlobalScope.launch {
-            delay(10000)
+        GlobalScope.launch(Dispatchers.IO) {
+            val pid = childPids[serverId]
             val process = processes[serverId]
+            var waited = 0
+            while (waited < 15000 &&
+                ((pid != null && VMLauncher.isProcessAlive(pid)) || (process != null && process.isAlive))
+            ) {
+                delay(500)
+                waited += 500
+            }
+            if (pid != null && VMLauncher.isProcessAlive(pid)) {
+                VMLauncher.killProcess(pid, 9)
+                onMessage(serverId, ConsoleMessage(content = "服务器进程已强制终止", type = LogType.ERROR))
+            }
             if (process != null && process.isAlive) {
                 process.destroyForcibly()
                 onMessage(serverId, ConsoleMessage(content = "服务器已强制停止", type = LogType.ERROR))
             }
+            cleanupServer(serverId)
+            updateStatus(serverId, ServerStatus.OFFLINE)
+            onMessage(serverId, ConsoleMessage(content = "§c服务器已停止", type = LogType.WARN))
         }
+    }
 
+    private fun cleanupServer(serverId: String) {
+        bionicThreads.remove(serverId)
+        childPids.remove(serverId)
+        stdinFds.remove(serverId)?.let { fd ->
+            try { VMLauncher.closeFd(fd) } catch (_: Exception) {}
+        }
         jobs[serverId]?.cancel()
-        processes.remove(serverId)
+        processes.remove(serverId)?.let { p ->
+            if (p.isAlive) p.destroyForcibly()
+        }
         tpsTrackers.remove(serverId)
+        rconConfigs.remove(serverId)
         clearPlayers(serverId)
-
-        updateStatus(serverId, ServerStatus.OFFLINE)
-        onMessage(serverId, ConsoleMessage(content = "§c服务器已停止", type = LogType.WARN))
     }
 
     fun restartServer(server: ServerInstance, serverDir: File, javaExec: String?, onMessage: (String, ConsoleMessage) -> Unit) {
@@ -417,8 +455,12 @@ class ServerEngine {
         onMessage(server.id, ConsoleMessage(content = "正在重启服务器...", type = LogType.SYSTEM))
         stopServer(server.id, onMessage)
 
-        GlobalScope.launch {
-            delay(3000)
+        GlobalScope.launch(Dispatchers.IO) {
+            var waited = 0
+            while (isRunning(server.id) && waited < 30000) {
+                delay(500)
+                waited += 500
+            }
             startServer(server, serverDir, javaExec, onMessage)
         }
     }
@@ -446,7 +488,8 @@ class ServerEngine {
     }
 
     fun isRunning(serverId: String): Boolean {
-        return processes[serverId]?.isAlive == true || bionicThreads[serverId]?.isAlive == true
+        return childPids[serverId]?.let { VMLauncher.isProcessAlive(it) } == true ||
+            processes[serverId]?.isAlive == true
     }
 
     fun getTps(serverId: String): Double {
@@ -567,6 +610,20 @@ class ServerEngine {
             map[serverId] = emptyList()
             _players.value = map
         }
+    }
+
+    fun rconConfig(serverId: String): RconPlayerProvider.RconConfig? = rconConfigs[serverId]
+
+    fun updatePlayer(serverId: String, updated: PlayerInfo) {
+        val current = _players.value[serverId] ?: emptyList()
+        val names = current.map { it.name }.toMutableList()
+        val map = _players.value.toMutableMap()
+        map[serverId] = if (updated.name in names) {
+            current.map { if (it.name == updated.name) updated else it }
+        } else {
+            current + updated
+        }
+        _players.value = map
     }
 
     private fun updateTps(serverId: String, line: String) {

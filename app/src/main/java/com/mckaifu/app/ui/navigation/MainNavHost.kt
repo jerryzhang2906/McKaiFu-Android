@@ -112,9 +112,15 @@ fun MainNavHost() {
     val currentDestination = navBackStackEntry?.destination
     val vm: MainViewModel = viewModel()
     val selectedServerId by vm.selectedServerId.collectAsState()
+    val currentServerId = navBackStackEntry?.arguments?.getString("serverId")
 
     LaunchedEffect(Unit) {
         vm.startScheduler()
+    }
+
+    LaunchedEffect(currentDestination) {
+        val sid = navBackStackEntry?.arguments?.getString("serverId")
+        if (sid != null && sid != selectedServerId) vm.selectServer(sid)
     }
 
     val showBottomBar = currentDestination?.route in bottomNavItems.map { it.route } ||
@@ -151,15 +157,23 @@ fun MainNavHost() {
                                 indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                             ),
                             onClick = {
+                                val currentRoute = currentDestination?.route
+                                val tabPrefix = screen.route.substringBefore("/")
+                                if (currentRoute == screen.route ||
+                                    currentRoute?.startsWith("$tabPrefix/") == true
+                                ) {
+                                    return@NavigationBarItem
+                                }
+                                val sid = currentServerId ?: selectedServerId
                                 val route = when (screen) {
-                                    Screen.Console -> if (selectedServerId != null)
-                                        Screen.Console.createRoute(selectedServerId!!) else screen.route
-                                    Screen.Players -> if (selectedServerId != null)
-                                        Screen.Players.createRoute(selectedServerId!!) else screen.route
-                                    Screen.Worlds -> if (selectedServerId != null)
-                                        Screen.Worlds.createRoute(selectedServerId!!) else screen.route
-                                    Screen.Settings -> if (selectedServerId != null)
-                                        Screen.Settings.createRoute(selectedServerId!!) else screen.route
+                                    Screen.Console -> if (sid != null)
+                                        Screen.Console.createRoute(sid) else Screen.Servers.route
+                                    Screen.Players -> if (sid != null)
+                                        Screen.Players.createRoute(sid) else Screen.Servers.route
+                                    Screen.Worlds -> if (sid != null)
+                                        Screen.Worlds.createRoute(sid) else Screen.Servers.route
+                                    Screen.Settings -> if (sid != null)
+                                        Screen.Settings.createRoute(sid) else Screen.Servers.route
                                     else -> screen.route
                                 }
                                 navController.navigate(route) {
@@ -167,7 +181,6 @@ fun MainNavHost() {
                                         saveState = true
                                     }
                                     launchSingleTop = true
-                                    restoreState = true
                                 }
                             }
                         )

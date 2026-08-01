@@ -192,6 +192,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         engine.players.map { it[serverId] ?: emptyList() }
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    fun refreshPlayersViaRcon(serverId: String) {
+        val config = engine.rconConfig(serverId) ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            RconPlayerProvider.fetchPlayers(serverId, config) { p ->
+                engine.updatePlayer(serverId, p)
+            }
+        }
+    }
+
     // ── 插件管理(真实目录) ──
 
     fun listPlugins(serverId: String): List<PluginInfo> {

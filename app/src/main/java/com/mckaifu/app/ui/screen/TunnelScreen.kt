@@ -17,15 +17,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mckaifu.app.data.model.TunnelInfo
 import com.mckaifu.app.data.model.TunnelRegion
 import com.mckaifu.app.data.model.TunnelType
+import com.mckaifu.app.service.TunnelBinaryManager
 import com.mckaifu.app.ui.component.*
 import com.mckaifu.app.ui.theme.*
+import com.mckaifu.app.util.AppPrefs
 import com.mckaifu.app.viewmodel.MainViewModel
 import java.io.File
 
@@ -34,12 +39,56 @@ import java.io.File
 fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewModel = viewModel()) {
     val servers by vm.servers.collectAsState()
     val server = servers.find { it.id == serverId }
-    var tunnelInfo by remember { mutableStateOf(TunnelInfo(serverId = serverId)) }
+    val context = LocalContext.current
+    var tunnelInfo by remember {
+        mutableStateOf(
+            AppPrefs.loadTunnelInfo(context, serverId)?.copy(serverId = serverId)
+                ?: TunnelInfo(serverId = serverId)
+        )
+    }
+    var configName by remember {
+        mutableStateOf(
+            tunnelInfo.configPath.takeIf { it.isNotBlank() }?.let { File(it).name }
+        )
+    }
     var showRegionDropdown by remember { mutableStateOf(false) }
     var binaryPath by remember { mutableStateOf("") }
     var tunnelActive by remember { mutableStateOf(false) }
     var tunnelAddress by remember { mutableStateOf<String?>(null) }
     var tunnelError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(tunnelInfo) {
+        AppPrefs.saveTunnelInfo(context, serverId, tunnelInfo)
+    }
+
+    val configDir = remember { File(context.filesDir, "tunnel_configs") }
+    val supportsBundled = tunnelInfo.type != TunnelType.NATAPP
+    val bundledReady = supportsBundled && TunnelBinaryManager.isBundled(context, tunnelInfo.type)
+
+    val configPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            val displayName = context.contentResolver.query(
+                uri, null, null, null, null
+            )?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            } ?: "tunnel-config.conf"
+            configDir.mkdirs()
+            val target = File(configDir, displayName)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { input.copyTo(it) }
+            }
+            tunnelInfo = tunnelInfo.copy(configPath = target.absolutePath)
+            configName = target.name
+            tunnelError = null
+        } catch (e: Exception) {
+            android.util.Log.e("mckaifu-tunnel", "导入配置文件失败", e)
+            tunnelError = "导入配置文件失败: ${e.message}"
+        }
+    }
 
     val tunnelStatus by vm.tunnelService.status.collectAsState()
 
@@ -217,8 +266,8 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
                                 TunnelType.PLAYIT -> "如 /sdcard/playit/playit"
                                 TunnelType.NGROK -> "如 /sdcard/ngrok/ngrok"
                                 TunnelType.NATAPP -> "如 /sdcard/natapp/natapp"
-                                TunnelType.SAKURA -> "如 /sdcard/frpc/frpc"
-                                TunnelType.CUSTOM -> "自定义命令"
+                                TunnelType.SAKURA -> "留空使用内置 frpc"
+                                TunnelType.CUSTOM -> "留空使用内置 frpc"
                             },
                             color = TextSecondary
                         )
@@ -228,9 +277,18 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
                     colors = outFieldColors()
                 )
                 Spacer(Modifier.height(4.dp))
-                Text("需自行下载对应平台的客户端可执行文件",
+                Text(
+                    when {
+                        bundledReady -> when (tunnelInfo.type) {
+                            TunnelType.PLAYIT -> "已内置 playit 客户端,留空将自动使用;也可填写自定义路径"
+                            TunnelType.NGROK -> "已内置 ngrok 客户端,留空将自动使用;也可填写自定义路径"
+                            else -> "已内置 frpc ${TunnelBinaryManager.FRPC_VERSION},留空将自动使用(需导入配置文件);也可填写自定义路径"
+                        }
+                        else -> "需自行下载对应平台的客户端可执行文件"
+                    },
                     style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary)
+                    color = TextSecondary
+                )
             }
 
             // Auth token
@@ -245,6 +303,42 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
                     singleLine = true,
                     colors = outFieldColors()
                 )
+            }
+
+            // Config file import
+            SectionHeader("配置文件(可选)")
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Text("导入已有配置文件(ngrok.yml / natapp.ini / frpc.toml 等)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextSecondary)
+                Spacer(Modifier.height(8.dp))
+                if (configName != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Description, null, tint = ServerOnline, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(configName!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextPrimary,
+                            modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            tunnelInfo = tunnelInfo.copy(configPath = "")
+                            configName = null
+                        }) { Text("移除") }
+                    }
+                } else {
+                    Text("未导入。使用配置文件时无需填写认证令牌,连接参数以配置文件为准。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { configPicker.launch(arrayOf("*/*")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.FileOpen, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("选择并导入配置文件")
+                    }
+                }
             }
 
             // Local port
@@ -291,11 +385,25 @@ fun TunnelScreen(serverId: String, navController: NavController, vm: MainViewMod
                         server?.let { vm.updateServer(it.copy(tunnelEnabled = false)) }
                     } else {
                         tunnelError = null
-                        val executable = File(binaryPath)
-                        if (!executable.exists()) {
-                            tunnelError = "未找到客户端程序: $binaryPath"
+                        val exe = when {
+                            binaryPath.isNotBlank() -> File(binaryPath).takeIf { it.exists() }
+                            supportsBundled -> TunnelBinaryManager.ensureBinary(context, tunnelInfo.type)
+                            else -> null
+                        }
+                        if (exe == null) {
+                            tunnelError = if (binaryPath.isNotBlank()) {
+                                "未找到客户端程序: $binaryPath"
+                            } else if (supportsBundled) {
+                                if ((tunnelInfo.type == TunnelType.CUSTOM || tunnelInfo.type == TunnelType.SAKURA) && configName == null) {
+                                    "内置 frpc 需要先导入配置文件"
+                                } else {
+                                    "内置二进制解压失败,请检查存储空间"
+                                }
+                            } else {
+                                "请填写客户端程序路径"
+                            }
                         } else {
-                            vm.tunnelService.startTunnel(tunnelInfo, executable) { line ->
+                            vm.tunnelService.startTunnel(tunnelInfo, exe) { line ->
                                 android.util.Log.d("mckaifu-tunnel", line)
                             }
                             server?.let { vm.updateServer(it.copy(tunnelEnabled = true)) }

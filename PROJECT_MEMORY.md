@@ -1,7 +1,7 @@
 # McKaiFu 项目记忆 (Project Memory)
 
 > 本文档记录项目的目标、架构、关键进展、踩坑经验、验证方法和当前状态，
-> 供后续会话快速恢复上下文。最后更新: 2026-07-31
+> 供后续会话快速恢复上下文。最后更新: 2026-07-31(会话6: 底栏修复/RCON/fork 子进程 JVM)
 
 ---
 
@@ -41,7 +41,8 @@ assets 内 tar.xz (Zalith/Pojav 的 bionic JRE 17)
 | `app/src/main/java/com/mckaifu/app/jni/VMLauncher.kt` | JNI 封装(注意 readFd 等签名是 FileDescriptor,非 Long) |
 | `app/src/main/java/com/mckaifu/app/service/JavaRuntimeManager.kt` | JRE 下载/解压/ensureRuntime/打 patch |
 | `app/src/main/java/com/mckaifu/app/service/ServerEngine.kt` | 启动/管道读取/看门狗/停止 |
-| `app/src/main/java/com/mckaifu/app/service/TunnelService.kt` | 内网穿透(Playit/Ngrok/NATAPP/樱花frp) |
+| `app/src/main/java/com/mckaifu/app/service/TunnelService.kt` | 内网穿透(Playit/Ngrok/NATAPP/樱花frp);CUSTOM/SAKURA 自动解析配置文件公网地址 |
+| `app/src/main/java/com/mckaifu/app/service/TunnelBinaryManager.kt` | 内置隧道二进制(playit/ngrok/frpc):按类型+ABI 从 assets/tunnel/<type>/ 解压到 files/bin + chmod 755 |
 | `app/src/main/java/com/mckaifu/app/data/repository/ServerRepository.kt` | 单例仓库:服务器列表/控制台消息/selectedServerId |
 | `app/src/main/java/com/mckaifu/app/util/AppPrefs.kt` | SharedPreferences:onboarding_done 等 |
 | `app/src/main/java/com/mckaifu/app/util/CompatibilityHelper.kt` | 兼容性 + 客户端版本提示 |
@@ -203,28 +204,203 @@ if (ignore && (tooOld || hasDash)) print warning(继续)
 
 ---
 
+## 六·三、内网穿透配置文件导入(2026-07-31 会话 3)
+
+**需求**: 穿透支持导入用户自己的配置文件(ngrok.yml / natapp.ini / frpc.toml / frpc.ini 等)
+
+**已实现**:
+1. `TunnelInfo.kt` 新增 `configPath: String = ""` 字段
+2. `TunnelService.kt`:
+   - 命令构建支持配置文件:NGROK `start --config <path>`、NATAPP `-config <path>`、SAKURA/CUSTOM `-c <path>`;无配置时走原有 authToken 逻辑
+   - **修复**: CUSTOM 类型原来 `else -> return@launch` 直接不启动,现可启动
+   - CUSTOM 类型日志解析公网地址(`[\\w.-]+:\\d+` 正则),且 CUSTOM 判断移到 sakura/frpc 判断之前(否则 frpc 输出的行会被 sakura 分支抢先匹配)
+3. `TunnelScreen.kt` 新增"配置文件(可选)"卡片:
+   - SAF(OpenDocument)选择文件 → 复制到 `files/tunnel_configs/<文件名>` → configPath 写入 TunnelInfo
+   - 显示已导入文件名 + "移除"按钮
+
+**踩坑(重要)**:
+- MIUI SAF 文件选择器点击有默认关联程序的文件(xml 等)会直接打开预览而不返回 URI;`.txt`/`.toml` 无关联时会正常返回。测试用 `.ini.txt` 后缀最稳
+- MIUI 的"最近文件"分类不索引新 push 的文件(MediaStore 延迟),需手动触发 `MEDIA_SCANNER_SCAN_FILE` 广播或等刷新
+- **`CursorIndexOutOfBoundsException: Index -1 requested, with a size of 1`**: `query()` 返回的 cursor 必须先 `moveToFirst()` 再 `getString()`!之前只判断 `idx >= 0` 就 getString,position 仍在 -1 → 崩溃。已修复:`if (idx >= 0 && c.moveToFirst())`
+- logcat 抓堆栈:`adb logcat -c` 清空后再操作,然后 `logcat -d -s mckaifu-tunnel:E` 看完整堆栈
+
+**验证状态(已完成,2026-07-31 会话 4)**: 在 **MuMu 模拟器**(adb 序列号 `emulator-5558`,机型 V2166A,横屏 1600x900)上全流程验证通过:
+1. install -r 安装最新 APK(含 moveToFirst 修复)
+2. push 测试配置到 `/sdcard/Download/frpc.ini.txt`(175B,SAF "最近文件"未索引 → 侧栏进"下载"目录)
+3. 穿透页 → "选择并导入配置文件" → 选中文件
+4. 结果: 回到穿透页 UI 显示文件名 `frpc.ini.txt` + "移除"按钮;`files/tunnel_configs/frpc.ini.txt` 存在(175B);logcat `mckaifu-tunnel:E` 无任何异常 → **CursorIndexOutOfBoundsException 已修复,导入流程完全正常**。
+
+**模拟器测试坐标(横屏 1600x900)**:
+- 穿透页"选择并导入配置文件"按钮: (800, 615)
+- SAF 选择器侧栏"下载"目录: (210, 330);文件卡片 frpc.ini.txt: (158, 509)
+- 其他参考坐标见会话 4 记录
+
+**MuMu 模拟器测试要点**:
+- adb 连接: `adb devices` 显示 `emulator-5558`(MuMu 自动注册,无需手动 connect)
+- 分辨率 900x1600 竖屏 / 1600x900 横屏;坐标不可复用真机 2880x1800 的比例,一律用 uiautomator dump 现抓
+- 模拟器上无 bionic JRE/JRE assets 问题(未测启动服务器,仅验证 UI 功能)
+
+---
+
+## 六·四、内置 frpc 开箱即用(2026-07-31 会话 5)
+
+**需求**: 把 frpc 二进制打包进 APK,用户只要导入合格的配置文件就能穿透,不再需要自备二进制。
+
+**已实现**:
+1. **交叉编译 frpc v0.51.3**(选 v0.51.3 是因为它是最后一个支持 `.ini` 格式的版本,兼容 ChmlFrp/樱花等国内服务的旧 ini 配置):
+   - arm64-v8a:`GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '-s -w'`(16MB)
+   - x86_64(给模拟器):`GOOS=android GOARCH=amd64 CGO_ENABLED=1` + NDK `x86_64-linux-android21-clang.cmd`(17MB,amd64 必须 cgo)
+   - 源码 clone:`gitee.com/mirrors/frp` tag `v0.51.3`;GOPROXY=`https://goproxy.cn,direct`
+   - 产物放 `app/src/main/assets/frpc/<abi>/frpc`
+2. **FrpManager.kt**(service 包): `pickAbi()` 优先 x86_64(模拟器)否则 arm64-v8a;`ensureFrpc()` 首次从 assets 解压到 `files/bin/frpc` 并 `chmod 755`;`isBundled()/isExtracted()`
+3. **TunnelScreen.kt**:
+   - `CUSTOM`/`SAKURA` 类型时,`客户端程序路径` 留空 → 启动按钮自动 `FrpManager.ensureFrpc(context)` 兜底
+   - 占位符改为"留空使用内置 frpc",提示"已内置 frpc v0.51.3,留空将自动使用(需导入配置文件);也可填写自定义路径"
+4. **配置文件持久化**(此前 TunnelInfo 纯内存,重启即丢): `AppPrefs.saveTunnelInfo/loadTunnelInfo` 按 `tunnel_info_<serverId>` 存 TunnelInfo JSON(kotlinx-serialization);TunnelScreen 打开时加载、`LaunchedEffect(tunnelInfo)` 保存
+5. **TunnelService**: CUSTOM/SAKURA 且带配置文件时,启动后从配置文件解析公网地址(`server_addr:remote_port`,支持 ini 与 toml)直接显示,因为 frpc 日志不打印地址
+
+**验证结论**(MuMu 模拟器,全部通过):
+- UI 显示"留空使用内置 frpc" + "已内置 frpc v0.51.3"
+- 导入 frpc.ini.txt → 重启 app → 类型(自定义隧道)+ 配置文件名都恢复(持久化生效)
+- 启动穿透 → `files/bin/frpc` 解压成功(17MB, x86_64,可执行)→ logcat:
+  `start frpc service for config file [..frpc.ini.txt]` → 正确解析配置并尝试连接
+  (测试配置用假域名 `cn-bj.nodechmlfrp.cn`,`no such host` 退出——配置合格时即正常连上)
+- UI 无崩溃,穿透断开后状态复位
+
+**注意**:
+- APK 从 ~40MB 增至 54MB(内置两个 ABI frpc 压缩后 ~14MB)
+- `androidResources { noCompress.clear() }` 已存在,assets 会压缩打包、运行时解压
+- 真机(arm64)会取 arm64-v8a 的 frpc;x86 32 位设备无内置(极少见,忽略)
+- ChmlFrp/樱花等国内 frp 服务通常给的是 ini 格式,与本内置 v0.51.3 兼容;若用户配的是新版 toml 也支持
+
+---
+
+## 六·五、会话 6: 底栏导航修复 + RCON 玩家数据 + 停止/重启崩溃修复(2026-07-31)
+
+### 1. 控制台页底部导航栏失效(bug 修复,真机验证通过)
+
+**症状**: 服务器详情 → "控制台"快捷操作 → 控制台页底部导航栏点击无效/跳错页(如点"服务器"tab 却停在控制台,或跳到字面量路由)。
+
+**根因**: `MainNavHost.kt` 底栏点击用 `popUpTo(start){saveState}+restoreState` 多返回栈机制,从详情页 push 进入的页面与 tab 栈混乱;且 `selectedServerId` 为空时会导航到字面量路由 `console/{serverId}`。
+
+**修复**: 
+- serverId 改为从当前路由参数派生(`navBackStackEntry.arguments.getString("serverId")`),不再依赖可能过期的 `selectedServerId`
+- 点击已选中的 tab 直接 no-op(避免 popUpTo 清状态)
+- 移除 `restoreState = true`(多返回栈混乱元凶)
+- `LaunchedEffect(currentDestination)` 同步 `vm.selectServer`
+
+### 2. 玩家数据接 RCON(health/food/level/坐标,真机验证链路)
+
+**新增 `RconPlayerProvider.kt`**(service 包):
+- `ensureRcon(serverDir)`: 若 server.properties 已开 rcon 则用用户配置;否则注入 `enable-rcon=true` + `rcon.port=25575` + 16 位随机密码(**开箱即用,每次启动服务器自动注入**)
+- `fetchPlayers(serverId, config, onUpdate)`: RCON 连 `127.0.0.1` 执行 `list` 拿在线名单,再对每人 `data get entity <name>` 解析 NBT:
+  - `Health: 20.0f`、`foodLevel`、`foodSaturationLevel`、`XpLevel`、`XpP`、`Pos: [x,y,z]`、`Dimension`(-1 地狱/1 末地/0 主世界)
+  - maxHealth 从 `Attributes: [{Name: "minecraft:generic.max_health", Base: 20.0d}]` 解析
+- **注意**: ping 无 vanilla 数据源,保持 0,UI 改为显示世界+坐标
+
+**接入**: ServerEngine.startServer 时 `rconConfigs[id]=ensureRcon(dir)`;新增 `updatePlayer` 合并;MainViewModel 加 `refreshPlayersViaRcon`;PlayerManagementScreen 每 4 秒轮询 + 顶部刷新按钮;XP 条改为 `(xp%100)/100f`、显示 `Lv ${level}`。
+
+**验证**(真机): `ss -tlnp` 显示 `*:25575 LISTEN`;PS 脚本走 RCON 协议(auth→list→summon→data get entity)全部通过,`data get entity` 输出标准 NBT JSON。
+
+### 3. 停止/重启服务器导致 App 崩溃(SIGABRT)——**fork 子进程方案**(重要!)
+
+**症状**: 点"停止"或"重启"→ 服务器正常保存退出(Closing Server)→ 0.3 秒后整个 App 崩溃:
+```
+FORTIFY: pthread_mutex_lock called on a destroyed mutex (0x7d8180e408)
+Fatal signal 6 (SIGABRT) in tid 31407 (hwuiTask0), pid com.mckaifu.app
+```
+
+**根因**: Pojav 风格 **in-process JVM**(JLI_Launch 直接在当前进程跑)的已知坑: JVM 退出路径与 Android 宿主线程(RenderThread/hwuiTask0)的 linker/全局 mutex 冲突 → SIGABRT。重启流程旧实现: stop 发送后立即 return(bionic 分支),watchdog 只 join 不置 OFFLINE(状态永远卡"停止中");restart 只等 3 秒就 startServer,旧 JVM 未退出 → `isRunning` 为 true → **重启静默失败**。
+
+**修复**(native + Kotlin):
+- `vmlauncher.c` 新增:
+  - `launchJvmChild(args, inFd, outFd)`: **fork 子进程** → 子进程 dup2 管道 stdio → `JLI_Launch` → `_exit(res)`(绕过 atexit/全局析构);父进程返回 pid。argv 构造在 fork 前完成(JNI 调用不能跨 fork)
+  - `isProcessAlive(pid)`(kill 0 / ESRCH)、`killProcess(pid, sig)`
+- `ServerEngine`:
+  - `startServerBionic` 改用 `launchJvmChild`,存 `childPids[id]`;宿主不再 setStdio/restoreStdio
+  - `stopServer`: 发送 stop 后**轮询等待真实退出**(15s 超时 SIGKILL),再 cleanup + 置 OFFLINE
+  - `restartServer`: 等 `isRunning` false(30s 上限)再 startServer,不再固定 3 秒
+  - watchdog 改为轮询子进程存活(1s 间隔),死亡后清理
+  - `isRunning` = `childPids 存活 || processes 存活`
+- **验证**(真机全通过): 启动 Done→停止(子进程 32674 SIGABRT,宿主 29653 存活,状态"离线")→重启(自动拉起新子进程 pid 1002,Done 4.9s,"在线")。崩溃被完全隔离在子进程,宿主永不崩。
+
+**native 编译命令**(NDK 27.1.12297006):
+```
+aarch64-linux-android21-clang.cmd -shared -fPIC -O2 -o libmckaifu_vm.so vmlauncher.c -llog
+```
+- **源码已备份到 `app/src/main/jniLibs/vmlauncher.c`**(解决"仓库无 native 源码"问题)
+- 仅 arm64-v8a;模拟器 x86_64 无此 .so(模拟器不测启动服务器)
+
+### 4. playit/ngrok 内置(未完成,会话 6 进行中)
+
+- **playit**: 官方下载页 URL 已失效(返回 HTML),改用 **GitHub release**: `github.com/playit-cloud/playit-agent/releases/download/v1.0.10/playit-cli-linux-aarch64`(5.6MB,已下载 → `assets/tunnel/playit/arm64-v8a/playit`,ELF 魔数已验证)
+- **ngrok**: `bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz`(~11MB)下载超时(CDN 极慢,PowerShell 与 curl 均失败),只下到 2.2MB 部分文件 → 未完成
+- **natapp**: 下载页需登录+购买隧道才能下载(`download.natapp.cn/...` 403)→ **无法内置**,UI 保持"自备二进制"
+- 下一步: 完成 ngrok 下载(换镜像/挂代理)→ 泛化 FrpManager(按类型解压 assets/tunnel/<type>/)→ TunnelScreen 对 PLAYIT/NGROK 留空路径兜底
+
+---
+
+## 六·六、会话 7: ngrok 内置完成 + TunnelBinaryManager 泛化(2026-08-01)
+
+**目标**: 完成会话 6 未完成的 playit/ngrok 内置,泛化单类型 frpc 管理器。
+
+**已实现**:
+1. **ngrok 下载成功**: 重试 `bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz`(10.5MB,之前超时)下载成功;解压 30.9MB ELF(e_machine=183=EM_AARCH64,已验证)→ `assets/tunnel/ngrok/arm64-v8a/ngrok`
+2. **统一资产结构**: `assets/tunnel/<type>/<abi>/<name>`,frpc 从 `assets/frpc/` 迁入 `assets/tunnel/frpc/`(arm64-v8a + x86_64)
+   - playit → `tunnel/playit/arm64-v8a/playit`(5.6MB,会话 6 已下载)
+   - ngrok → `tunnel/ngrok/arm64-v8a/ngrok`(30.9MB)
+   - frpc → `tunnel/frpc/<abi>/frpc`(16/17MB)
+   - natapp 仍无法内置(官方需登录)
+3. **FrpManager → TunnelBinaryManager**(service 包):
+   - `ensureBinary(context, type)` 按 TunnelType 映射 assets 路径(`TYPE_DIR`/`BINARY_NAME` map),解压到 `files/bin/<name>` + chmod 755
+   - `isBundled(context, type)`/`isExtracted`/`deleteBinary` 全部按类型泛化;`FRPC_VERSION = "v0.51.3"`
+4. **TunnelScreen.kt**:
+   - `supportsBundled = type != NATAPP`;`bundledReady = isBundled(context, type)`
+   - 帮助文字按类型: PLAYIT "已内置 playit 客户端" / NGROK "已内置 ngrok 客户端" / frpc 系 "已内置 frpc v0.51.3,留空将自动使用(需导入配置文件)"
+   - 启动按钮: 留空路径时 `TunnelBinaryManager.ensureBinary(context, type)` 兜底
+   - 错误提示细化: frpc 系无配置报"需要先导入配置文件",其余报"内置二进制解压失败"
+5. **模拟器验证**(MuMu x86_64,全部通过):
+   - NGROK 类型: x86_64 无内置 → 正确显示"需自行下载对应平台的客户端可执行文件"
+   - CUSTOM 类型: 显示"已内置 frpc v0.51.3"→ 启动穿透 → logcat `start frpc service for config file [frpc.ini.txt]`(新资产路径解压成功),`files/bin/frpc` 17MB x86_64 权限 rwxr-xr-x ✓;连接假域名失败退出(预期),状态复位
+   - 配置文件持久化正常(frpc.ini.txt 恢复)
+
+**注意**:
+- APK 67.8MB(ngrok arm64 压缩后 +~14MB)
+- playit/ngrok 仅内置 arm64-v8a(真机);x86_64 模拟器上显示"需自行下载"
+- 真机(arm64)上 playit/ngrok 的内置提示 + 实际启动验证待真机上线后补(命令已就绪: playit `--secret <token> --port <port>`;ngrok `tcp <port> --authtoken <token>`)
+- 未尝试下载 x86_64 版 playit/ngrok(用户要求不再下载,APK 体积也已偏大)
+
+---
+
 ## 七、待办 / 已知问题
 
-- [ ] APK 构建缓存污染问题(195MB vs 40MB)未根治
+- [x] 内网穿透配置文件导入: 真机验证 `moveToFirst` 修复后的导入流程(**会话 4 在 MuMu 模拟器验证通过**)
+- [x] 内置 frpc(会话 5): CUSTOM/樱花frp 导入配置即可用,不再需要自备二进制
+- [x] 底栏导航失效(会话 6): 已修,真机验证
+- [x] 停止/重启崩溃(会话 6): fork 子进程方案已修,真机验证(启动/停止/重启全流程)
+- [x] 玩家 health/hunger/xp/坐标接 RCON(会话 6): 已实现,真机验证链路
+- [x] playit/ngrok 内置(会话 7): ngrok arm64 下载成功;TunnelBinaryManager 泛化;模拟器验证内置 frpc 回归;playit/ngrok 真机内置验证待真机上线
+- [ ] APK 构建缓存污染问题: 本次构建 APK 38MB 正常,195MB 问题未复现;根因疑似 debug 构建时 classes.dex 异常(44MB)+ 未压缩打包,待确认是否已随构建环境稳定消失
 - [ ] oshi/JNA glibc 警告未消除(无害,可加白名单或忽略)
-- [ ] 内网穿透需用户自备二进制文件(playit/ngrok/natapp/frpc),未打包进 APK
 - [ ] `ensureRuntime` 的 release 文件补丁未验证(已由 IgnoreJavaVersion 绕过,可留)
 - [ ] 截图验证需用 cmd 重定向(`screencap -p`),PS 会坏文件
-- [ ] uiautomator dump 中文乱码: 读文件用 UTF8,或 GBK 转码技巧
-- [ ] 玩家追踪的 health/hunger/ping 等字段暂无数据源(只有名单),可后续接 RCON
+- [ ] uiautomator dump 中文乱码: 用 ASCII 脚本提取 text/bounds 到文件再 Read 可绕开(会话 5 已验证)
 - [ ] CommunityScreen 社区列表依赖 GitHub raw 联网,离线时显示重试
+- [ ] **未提交**: 会话 5(frpc 内置)+ 会话 6(导航修复/RCON/fork 方案)+ 会话 7(ngrok 内置/TunnelBinaryManager)全部改动尚未 git commit
+- [ ] 视频宣传(用户需求): B 站宣传视频,热门配音(不用 AI),GitHub 链接,实拍演示,流畅剪辑——待规划
 
 ---
 
 ## 八、环境
 
 - 真机: 小米(Xiaomi),adb 序列号 `90d69b9`,WiFi IP `192.168.1.18`,系统 Android 15
-- 屏幕: 2880x1800 landscape(测试时横屏)
+- 屏幕: 2880x1800 landscape(测试时横屏);真机也曾出现 1800x2880 竖屏
 - JRE assets: Zalith/Pojav 的 bionic JRE 17(bionic libc,非 glibc)
 - 手机数据目录: `files/servers/<uuid>/` (server.jar, eula.txt, server.properties, tmp/, versions/)
 - 服务器目录: `files/servers/289292cf-0096-4728-b6ea-fd2602f71515/`
+- 模拟器: MuMu(`emulator-5558`,曾断开后真机 90d69b9 上线;重连 MuMu 用 `adb connect 127.0.0.1:7555`)
+- RCON: 注入后端口 25575,密码存 server.properties(每次启动注入,用户已开启则尊重原配置)
 
 ### 注意: 原生库是预编译的
-`app/src/main/jniLibs/arm64-v8a/libmckaifu_vm.so` 是**预编译产物**(NDK 编译 vmlauncher.c 得到),
-仓库里暂无 vmlauncher.c 源码(上次会话在临时目录编译后未拷回项目)。
-如需改 native 代码,需重建 NDK 工程并替换该 .so;仅 arm64-v8a 已编译。
+`app/src/main/jniLibs/arm64-v8a/libmckaifu_vm.so` 是 NDK 编译产物,**源码已备份在 `app/src/main/jniLibs/vmlauncher.c`**(会话 6 拷回)。
+编译命令见上文六·五第 3 节;仅 arm64-v8a 已编译(模拟器 x86_64 未编译,模拟器上不测启动服务器)。

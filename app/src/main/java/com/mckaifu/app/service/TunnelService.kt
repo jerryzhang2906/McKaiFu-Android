@@ -32,25 +32,36 @@ class TunnelService {
 
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
+                val configFile = tunnel.configPath.takeIf { it.isNotBlank() }
+                    ?.let { File(it) }?.takeIf { it.exists() }
+
                 val commands = when (tunnel.type) {
                     TunnelType.PLAYIT -> listOf(
                         executable.absolutePath,
                         "--secret", tunnel.authToken,
                         "--port", tunnel.localPort.toString()
                     )
-                    TunnelType.NGROK -> listOf(
+                    TunnelType.NGROK -> if (configFile != null) {
+                        listOf(executable.absolutePath, "start", "--config", configFile.absolutePath)
+                    } else listOf(
                         executable.absolutePath, "tcp", tunnel.localPort.toString(),
                         "--authtoken", tunnel.authToken
                     )
-                    TunnelType.NATAPP -> listOf(
+                    TunnelType.NATAPP -> if (configFile != null) {
+                        listOf(executable.absolutePath, "-config", configFile.absolutePath)
+                    } else listOf(
                         executable.absolutePath, "-authtoken", tunnel.authToken,
                         "-servername", tunnel.region.name.lowercase().ifEmpty { "auto" }
                     )
-                    TunnelType.SAKURA -> listOf(
+                    TunnelType.SAKURA -> if (configFile != null) {
+                        listOf(executable.absolutePath, "-c", configFile.absolutePath)
+                    } else listOf(
                         executable.absolutePath, "-f", tunnel.authToken,
                         "-p", tunnel.region.name.lowercase().ifEmpty { "auto" }
                     )
-                    else -> return@launch
+                    TunnelType.CUSTOM -> if (configFile != null) {
+                        listOf(executable.absolutePath, "-c", configFile.absolutePath)
+                    } else listOf(executable.absolutePath)
                 }
 
                 val pb = ProcessBuilder(commands)
@@ -58,6 +69,18 @@ class TunnelService {
                 tunnelProcess = pb.start()
 
                 _status.value = TunnelStatus(isActive = true, region = tunnel.region.displayName)
+
+                if (configFile != null &&
+                    (tunnel.type == TunnelType.CUSTOM || tunnel.type == TunnelType.SAKURA)
+                ) {
+                    val addr = parseFrpPublicAddress(configFile)
+                    if (addr.isNotEmpty()) {
+                        _status.value = _status.value.copy(
+                            publicAddress = addr,
+                            publicPort = tunnel.localPort
+                        )
+                    }
+                }
 
                 val reader = BufferedReader(InputStreamReader(tunnelProcess!!.inputStream))
                 var line: String?
@@ -90,6 +113,15 @@ class TunnelService {
                                 publicAddress = addr,
                                 publicPort = tunnel.localPort
                             )
+                        }
+                        tunnel.type == TunnelType.CUSTOM -> {
+                            val addr = Regex("[\\w.-]+:\\d+").find(line)?.value ?: ""
+                            if (addr.isNotEmpty()) {
+                                _status.value = _status.value.copy(
+                                    publicAddress = addr,
+                                    publicPort = tunnel.localPort
+                                )
+                            }
                         }
                         line.contains("sakura", ignoreCase = true) ||
                             line.contains("frpc", ignoreCase = true) -> {
@@ -124,4 +156,36 @@ class TunnelService {
     }
 
     fun isActive(): Boolean = tunnelProcess?.isAlive == true
+
+    private fun parseFrpPublicAddress(configFile: File): String {
+        val text = try { configFile.readText(Charsets.UTF_8) } catch (_: Exception) { return "" }
+        val isToml = text.contains("[[proxies]]")
+        var server = ""
+        var serverPort = ""
+        var remotePort = ""
+        for (rawLine in text.lineSequence()) {
+            val line = rawLine.substringBefore('#').trim()
+            if (isToml) {
+                if (server.isEmpty() && line.startsWith("serverAddr")) {
+                    server = line.substringAfter('=').trim().trim('"', ' ')
+                        .removePrefix("https://").removePrefix("http://").removePrefix("tcp://")
+                } else if (serverPort.isEmpty() && line.startsWith("serverPort")) {
+                    serverPort = line.substringAfter('=').trim()
+                } else if (remotePort.isEmpty() && line.startsWith("remotePort")) {
+                    remotePort = line.substringAfter('=').trim()
+                }
+            } else {
+                if (server.isEmpty() && line.startsWith("server_addr")) {
+                    server = line.substringAfter('=').trim()
+                        .removePrefix("https://").removePrefix("http://").removePrefix("tcp://")
+                } else if (remotePort.isEmpty() && line.startsWith("remote_port")) {
+                    remotePort = line.substringAfter('=').trim()
+                }
+            }
+            if (server.isNotEmpty() && remotePort.isNotEmpty()) break
+        }
+        val port = remotePort.ifEmpty { serverPort }
+        if (server.isEmpty() || port.isEmpty()) return ""
+        return "$server:$port"
+    }
 }

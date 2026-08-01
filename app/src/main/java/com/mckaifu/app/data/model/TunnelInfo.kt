@@ -13,6 +13,7 @@ data class TunnelInfo(
     val localPort: Int = 25565,
     val region: TunnelRegion = TunnelRegion.AUTO,
     val authToken: String = "",
+    val configPath: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
 
