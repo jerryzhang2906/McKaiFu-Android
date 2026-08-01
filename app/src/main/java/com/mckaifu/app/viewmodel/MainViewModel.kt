@@ -83,8 +83,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteServer(serverId: String) {
+        // 停止隧道 + 强制杀进程 + 清理并删除服务器(含文件)
+        try { tunnelService.stopTunnel() } catch (_: Exception) {}
         engine.cleanup(serverId)
         repository.removeServer(serverId)
+        updateForegroundService()
     }
 
     fun startServer(serverId: String) {

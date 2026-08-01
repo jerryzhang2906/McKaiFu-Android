@@ -294,44 +294,35 @@ class DownloadManager {
         }
     }
 
-    // ── Paper API ──
-    private fun fetchPaperVersions(): List<CoreVersion> {
-        val project = JSONObject(fetchUrl("https://fill.papermc.io/v3/projects/paper"))
-        val versionsObj = project.getJSONObject("versions")
-        val allVersions = mutableListOf<String>()
-
-        val groups = versionsObj.keys().asSequence().toList()
-        for (group in groups) {
-            val patches = versionsObj.getJSONArray(group)
-            for (i in 0 until patches.length()) {
-                allVersions.add(patches.getString(i))
-            }
+    // ── Paper API (fill.papermc.io mirror) ──
+    private suspend fun fetchPaperVersions(): List<CoreVersion> = coroutineScope {
+        val manifest = try {
+            JSONObject(fetchUrl("https://fill.papermc.io/v3/projects/paper/versions"))
+        } catch (_: Exception) { return@coroutineScope emptyList() }
+        val versionsArr = manifest.getJSONArray("versions")
+        val mcVersions = mutableListOf<String>()
+        for (i in 0 until versionsArr.length()) {
+            val v = versionsArr.getJSONObject(i)
+            val status = v.optJSONObject("support")?.optString("status", "") ?: ""
+            if (status == "RETIRED" || status == "LEGACY") continue
+            mcVersions.add(v.getJSONObject("version").getString("id"))
         }
-        allVersions.sortWith(Comparator { a, b ->
-            val ta = versionTuple(a)
-            val tb = versionTuple(b)
-            for (i in 0 until maxOf(ta.size, tb.size)) {
-                val x = ta.getOrNull(i) ?: 0
-                val y = tb.getOrNull(i) ?: 0
-                if (x != y) return@Comparator y.compareTo(x)
-            }
-            0
-        })
-
-        val result = mutableListOf<CoreVersion>()
-
-        for ((index, ver) in allVersions.withIndex()) {
-            try {
-                val buildsJson = fetchUrl("https://fill.papermc.io/v3/projects/paper/versions/$ver/builds")
-                val builds = JSONObject(buildsJson).getJSONArray("builds")
-                if (builds.length() > 0) {
-                    var lastBuild: JSONObject? = null
+        mcVersions.sortWith(versionComparator(reverse = true))
+        // 只对最近 25 个拉 builds(并行),避免数百次串行请求
+        val recent = mcVersions.take(25)
+        val deferreds = recent.map { ver ->
+            async(Dispatchers.IO) {
+                try {
+                    val raw = fetchUrl("https://fill.papermc.io/v3/projects/paper/versions/$ver/builds")
+                    val builds = JSONArray(raw)
+                    if (builds.length() == 0) return@async null
+                    var chosen: JSONObject? = null
                     for (i in 0 until builds.length()) {
                         val b = builds.getJSONObject(i)
-                        if ("STABLE" == b.optString("channel", "ALPHA")) { lastBuild = b; break }
+                        if (b.optString("channel", "ALPHA") == "STABLE") { chosen = b; break }
                     }
-                    if (lastBuild == null) lastBuild = builds.getJSONObject(0)
-                    val buildObj = lastBuild!!
+                    if (chosen == null) chosen = builds.getJSONObject(0)
+                    val buildObj = chosen!!
                     val buildNum = buildObj.getInt("id")
                     val downloads = buildObj.getJSONObject("downloads")
                     val download = when {
@@ -339,24 +330,48 @@ class DownloadManager {
                         downloads.has("server:mojang") -> downloads.getJSONObject("server:mojang")
                         else -> downloads.getJSONObject(downloads.keys().next())
                     }
-
-                    result.add(CoreVersion(
+                    CoreVersion(
                         coreType = CoreType.PAPER,
                         version = "$ver-$buildNum",
                         mcVersion = ver,
                         buildNumber = buildNum,
                         downloadUrl = download.getString("url"),
                         fileSize = download.optLong("size", 0),
-                        isRecommended = index == 0
-                    ))
-                }
-            } catch (_: Exception) {}
+                    )
+                } catch (_: Exception) { null }
+            }
         }
-        return result.reversed()
+        val result = deferreds.awaitAll().filterNotNull()
+        if (result.isEmpty()) return@coroutineScope emptyList()
+        // 按 mcVersion 倒序(最新在最前)
+        val sorted = result.sortedWith(Comparator { a, b ->
+            val ta = versionTuple(a.mcVersion)
+            val tb = versionTuple(b.mcVersion)
+            for (i in 0 until maxOf(ta.size, tb.size)) {
+                val x = ta.getOrNull(i) ?: 0
+                val y = tb.getOrNull(i) ?: 0
+                if (x != y) return@Comparator y.compareTo(x)
+            }
+            0
+        })
+        sorted.mapIndexed { idx, v -> v.copy(isRecommended = idx == 0) }
     }
 
     private fun versionTuple(v: String): List<Int> =
         v.split(".").mapNotNull { it.toIntOrNull() }
+
+    private fun versionComparator(reverse: Boolean = false) = Comparator<String> { a, b ->
+        val ta = versionTuple(a)
+        val tb = versionTuple(b)
+        for (i in 0 until maxOf(ta.size, tb.size)) {
+            val x = ta.getOrNull(i) ?: 0
+            val y = tb.getOrNull(i) ?: 0
+            if (x != y) {
+                return@Comparator if (reverse) y.compareTo(x) else x.compareTo(y)
+            }
+        }
+        0
+    }
 
     // ── Purpur API ──
     private fun fetchPurpurVersions(): List<CoreVersion> {
@@ -385,33 +400,32 @@ class DownloadManager {
         return result.reversed()
     }
 
-    // ── Pufferfish API ──
+    // ── Pufferfish (硬编码,无公开 API) ──
     private fun fetchPufferfishVersions(): List<CoreVersion> {
-        val result = mutableListOf<CoreVersion>()
-        for (mcVer in listOf("1.20.4", "1.20.2", "1.20.1", "1.19.4", "1.19.3")) {
-            result.add(CoreVersion(
+        val vers = listOf("1.21.1", "1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4")
+        return vers.mapIndexed { i, mcVer ->
+            CoreVersion(
                 coreType = CoreType.PUFFERFISH,
                 version = mcVer,
                 mcVersion = mcVer,
                 downloadUrl = "https://pufferfish.host/downloads/pufferfish/builds/latest/$mcVer",
-                isRecommended = mcVer == "1.20.4"
-            ))
+                isRecommended = i == 0,
+            )
         }
-        return result
     }
 
-    // ── Spigot API ──
+    // ── Spigot (硬编码,getbukkit 下载源国内常失效,建议改用 Paper) ──
     private fun fetchSpigotVersions(): List<CoreVersion> {
-        return listOf(
-            CoreVersion(CoreType.SPIGOT, "1.20.4", "1.20.4",
-                downloadUrl = "https://download.getbukkit.org/spigot/spigot-1.20.4.jar", isRecommended = true),
-            CoreVersion(CoreType.SPIGOT, "1.20.2", "1.20.2",
-                downloadUrl = "https://download.getbukkit.org/spigot/spigot-1.20.2.jar"),
-            CoreVersion(CoreType.SPIGOT, "1.20.1", "1.20.1",
-                downloadUrl = "https://download.getbukkit.org/spigot/spigot-1.20.1.jar"),
-            CoreVersion(CoreType.SPIGOT, "1.19.4", "1.19.4",
-                downloadUrl = "https://download.getbukkit.org/spigot/spigot-1.19.4.jar"),
-        )
+        val vers = listOf("1.21.1", "1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4")
+        return vers.mapIndexed { i, mcVer ->
+            CoreVersion(
+                coreType = CoreType.SPIGOT,
+                version = mcVer,
+                mcVersion = mcVer,
+                downloadUrl = "https://download.getbukkit.org/spigot/spigot-$mcVer.jar",
+                isRecommended = i == 0,
+            )
+        }
     }
 
     // ── Vanilla API ──
@@ -441,22 +455,75 @@ class DownloadManager {
         return result.take(20)
     }
 
-    // ── Nukkit API ──
+    // ── Nukkit (Jenkins CI, auto latest) ──
     private fun fetchNukkitVersions(): List<CoreVersion> {
-        return listOf(
-            CoreVersion(CoreType.NUKKIT, "1.0.0", "基岩版1.20",
+        return try {
+            val job = "https://ci.opencollab.dev/job/NukkitX/job/Nukkit/job/master/lastSuccessfulBuild"
+            val json = JSONObject(fetchUrl("$job/api/json?tree=number,artifacts[fileName,relativePath]"))
+            val buildNum = json.optInt("number", 0)
+            val arts = json.optJSONArray("artifacts")
+            var fileName = "nukkit-1.0-SNAPSHOT.jar"
+            if (arts != null && arts.length() > 0) {
+                val a = arts.getJSONObject(0)
+                fileName = a.optString("relativePath", a.optString("fileName", fileName))
+            }
+            listOf(CoreVersion(
+                coreType = CoreType.NUKKIT,
+                version = "build-$buildNum",
+                mcVersion = "基岩版",
+                buildNumber = buildNum,
+                downloadUrl = "$job/artifact/$fileName",
+                isRecommended = true,
+            ))
+        } catch (_: Exception) {
+            listOf(CoreVersion(
+                coreType = CoreType.NUKKIT,
+                version = "latest",
+                mcVersion = "基岩版",
                 downloadUrl = "https://ci.opencollab.dev/job/NukkitX/job/Nukkit/job/master/lastSuccessfulBuild/artifact/target/nukkit-1.0-SNAPSHOT.jar",
-                isRecommended = true),
-        )
+                isRecommended = true,
+            ))
+        }
     }
 
-    // ── PocketMine API ──
+    // ── PocketMine (GitHub releases API, auto crawl) ──
     private fun fetchPocketmineVersions(): List<CoreVersion> {
-        return listOf(
-            CoreVersion(CoreType.POCKETMINE, "5.0.0", "基岩版1.20",
-                downloadUrl = "https://github.com/pmmp/PocketMine-MP/releases/download/5.0.0/PocketMine-MP.phar",
-                isRecommended = true),
-        )
+        val releases = try {
+            JSONArray(fetchUrl("https://api.github.com/repos/pmmp/PocketMine-MP/releases?per_page=20"))
+        } catch (_: Exception) { return emptyList() }
+        val result = mutableListOf<CoreVersion>()
+        for (i in 0 until releases.length()) {
+            try {
+                val rel = releases.getJSONObject(i)
+                if (rel.optBoolean("draft", false) || rel.optBoolean("prerelease", false)) continue
+                val tag = rel.optString("tag_name", "") ?: ""
+                if (tag.isEmpty()) continue
+                var dlUrl = ""
+                var size = 0L
+                val assets = rel.optJSONArray("assets")
+                if (assets != null) {
+                    for (j in 0 until assets.length()) {
+                        val a = assets.getJSONObject(j)
+                        val name = a.optString("name", "")
+                        if (name.endsWith(".phar")) {
+                            dlUrl = a.optString("browser_download_url", "")
+                            size = a.optLong("size", 0)
+                            break
+                        }
+                    }
+                }
+                if (dlUrl.isEmpty()) continue
+                result.add(CoreVersion(
+                    coreType = CoreType.POCKETMINE,
+                    version = tag,
+                    mcVersion = "基岩版",
+                    downloadUrl = dlUrl,
+                    fileSize = size,
+                    isRecommended = result.isEmpty(),
+                ))
+            } catch (_: Exception) {}
+        }
+        return result
     }
 
     // ── Modrinth Search ──

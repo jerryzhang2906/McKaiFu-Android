@@ -41,6 +41,7 @@ fun ServerListScreen(navController: NavController, vm: MainViewModel = viewModel
     val servers by vm.servers.collectAsState()
     val statuses by vm.serverStatuses.collectAsState()
     val context = LocalContext.current
+    var deleteTarget by remember { mutableStateOf<ServerInstance?>(null) }
 
     Scaffold(
         topBar = {
@@ -124,12 +125,25 @@ fun ServerListScreen(navController: NavController, vm: MainViewModel = viewModel
                             onRestart = {
                                 vm.selectServer(server.id)
                                 vm.restartServer(server.id)
-                            }
+                            },
+                            onDelete = { deleteTarget = server }
                         )
                     }
                 }
             }
         }
+    }
+
+    deleteTarget?.let { server ->
+        ConfirmDeleteDialog(
+            title = "删除服务器",
+            message = "确定删除「${server.name}」吗?\n将同时删除其世界、插件、备份等所有文件,且不可恢复。",
+            onConfirm = {
+                vm.deleteServer(server.id)
+                deleteTarget = null
+            },
+            onDismiss = { deleteTarget = null }
+        )
     }
 }
 
@@ -140,7 +154,8 @@ fun ServerCard(
     onClick: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
-    onRestart: () -> Unit
+    onRestart: () -> Unit,
+    onDelete: () -> Unit = {}
 ) {
     val statusColor = when (status) {
         ServerStatus.ONLINE -> ServerOnline
@@ -177,9 +192,9 @@ fun ServerCard(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                         StatusDot(
                             isOnline = status == ServerStatus.ONLINE,
                             size = 12.dp,
@@ -208,16 +223,30 @@ fun ServerCard(
                         }
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Surface(
-                            color = statusColor.copy(alpha = 0.15f),
-                            shape = MaterialTheme.shapes.extraSmall
-                        ) {
-                            Text(
-                                " ${status.displayName} ",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = statusColor,
-                                fontWeight = FontWeight.Bold
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = statusColor.copy(alpha = 0.15f),
+                                shape = MaterialTheme.shapes.extraSmall
+                            ) {
+                                Text(
+                                    " ${status.displayName} ",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            IconButton(
+                                onClick = onDelete,
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = "删除",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                         if (status == ServerStatus.ONLINE) {
                             Spacer(Modifier.height(4.dp))

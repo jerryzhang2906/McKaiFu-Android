@@ -123,9 +123,38 @@ class ServerRepository(private val context: Context) {
 
     fun removeServer(serverId: String) {
         val list = _servers.value.toMutableList()
+        val server = list.find { it.id == serverId }
         list.removeAll { it.id == serverId }
         _servers.value = list
         saveServers()
+
+        // 递归删除服务器目录(jar/世界/plugins/backups)
+        if (server != null) {
+            try {
+                val baseDir = File(context.filesDir, "servers")
+                val dir = File(baseDir, serverId)
+                if (dir.exists()) dir.deleteRecursively()
+            } catch (_: Exception) {}
+        }
+        // 清理该服务器的定时任务
+        if (_scheduledTasks.value.containsKey(serverId)) {
+            val tasks = _scheduledTasks.value.toMutableMap()
+            tasks.remove(serverId)
+            _scheduledTasks.value = tasks
+            saveTasks()
+        }
+        // 清理控制台消息
+        if (_consoleMessages.value.containsKey(serverId)) {
+            val msgs = _consoleMessages.value.toMutableMap()
+            msgs.remove(serverId)
+            _consoleMessages.value = msgs
+        }
+        // 清理穿透配置
+        try {
+            File(context.filesDir, "tunnel_configs").listFiles()?.forEach { f ->
+                if (f.name.contains(serverId)) f.delete()
+            }
+        } catch (_: Exception) {}
     }
 
     fun getServer(serverId: String): ServerInstance? {

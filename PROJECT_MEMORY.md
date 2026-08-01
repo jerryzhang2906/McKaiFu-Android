@@ -372,6 +372,56 @@ aarch64-linux-android21-clang.cmd -shared -fPIC -O2 -o libmckaifu_vm.so vmlaunch
 
 ---
 
+## 六·七、会话 8: 核心版本自动爬取修复 + 服务器删除(2026-08-01)
+
+**需求**: 创建服务器要能选版本(如 Paper 1.20.4)并下载;版本要自动爬取(不硬编码,不怕新版本);用镜像站(国内);服务器要能删除。
+
+### 1. 关键 bug: Paper 版本列表为空(用户"不能选版本"的根因)
+
+**现状**: `fetchPaperVersions()` 用 `https://fill.papermc.io/v3/projects/paper/versions/{ver}/builds`,
+该镜像**返回 JSON 数组**(`[{...}]`),而代码按对象解析 `JSONObject(buildsJson).getJSONArray("builds")` → 抛异常 → 被 catch 吞掉 → **Paper 版本列表永远为空**!
+
+**修复**(DownloadManager.kt):
+- 用 `/versions` 端点拿版本列表(标准 `{"versions":[{"version":{"id":"26.2"}}]}`),跳过 RETIRED/LEGACY
+- **只对最近 25 个版本并行**拉 builds(`coroutineScope { async(Dispatchers.IO) }`),避免数百次串行请求(之前会等 >90 秒)
+- builds 按 **JSONArray** 解析,取第一个 STABLE(数组最新在前)
+- 下载 URL 是绝对路径 `https://fill-data.papermc.io/v1/objects/<sha>/paper-<ver>-<build>.jar`(CDN,国内可用,已验证 42MB 200 OK)
+
+**验证**(MuMu 模拟器): 创建向导 → 下载核心对话框 → Paper 显示 **26.2(推荐)、26.1.2、26.1.1、26.2-rc-2、1.21.11** ✓ 自动爬取最新版成功
+
+**注意**: fill 镜像可用性(2026-08 实测):
+- `fill.papermc.io` OK(镜像,Paper)
+- `api.papermc.io` **403 被拒**(官方,国内不可用)
+- `api.fastmirror.net` DNS 解析失败
+- `bmclapi2.bangbang93.com` 无 spigot/paper 端点
+- `api.purpurmc.org` OK、`launchermeta.mojang.com` OK、`api.github.com` OK
+- `api.getbukkit.org` / `download.getbukkit.org` **DNS 不通**(Spigot 下载源失效)
+
+### 2. 各核心版本来源改造
+
+| 核心 | 改造前 | 改造后 |
+|---|---|---|
+| Paper | fill 镜像(但 builds 解析 bug → 空) | **修复 + 并行 + 限 25 个最近版本**(fill 镜像) |
+| Purpur | 官方 API ✓ | 保留(国内可用) |
+| Vanilla | launchermeta ✓ | 保留 |
+| Pufferfish | 硬编码 5 个(≤1.20.4) | 硬编码更新到 1.21.1(无公开 API) |
+| Spigot | 硬编码 4 个 | 硬编码更新到 1.21.1(下载源 getbukkit 国内失效,建议用 Paper) |
+| Nukkit | 硬编码 1 个 | **Jenkins CI API 自动拉最新构建**(ci.opencollab.dev) |
+| PocketMine | 硬编码 1 个 | **GitHub releases API 自动爬取 20 个**(api.github.com/pmmp) |
+
+### 3. 服务器删除(新增 UI + 连文件删)
+
+- `ServerRepository.removeServer`: 递归删除 `files/servers/{id}/`(jar/世界/plugins/backups)+ 清理定时任务/控制台消息/tunnel 配置
+- `MainViewModel.deleteServer`: 停隧道 + `engine.cleanup` 杀进程 + remove + 更新前台服务
+- `ServerListScreen`: 卡片右上角加**删除图标**(状态标签右侧)→ `ConfirmDeleteDialog` 确认("将同时删除其世界、插件、备份等所有文件,且不可恢复")→ 删除
+- **验证**(MuMu 模拟器): 点删除图标 → 确认框弹出(标题"删除服务器"+ 删除/取消)→ 确认后列表 3→2,`files/servers/` 目录清空 ✓
+
+### 4. 待注意
+- 创建向导里版本 ExposedDropdownMenu **在 MuMu 模拟器上点击不展开**(input tap 无效),但穿透页区域下拉同组件曾正常 → 疑似模拟器时序/渲染问题;真机待验证。**下载核心对话框能正常显示版本列表**,不影响实际选版本
+- APK 未重新构建验证 Nukkit/PocketMine 分支(已编译通过,但未在模拟器拉真实数据)
+
+---
+
 ## 七、待办 / 已知问题
 
 - [x] 内网穿透配置文件导入: 真机验证 `moveToFirst` 修复后的导入流程(**会话 4 在 MuMu 模拟器验证通过**)
@@ -380,6 +430,12 @@ aarch64-linux-android21-clang.cmd -shared -fPIC -O2 -o libmckaifu_vm.so vmlaunch
 - [x] 停止/重启崩溃(会话 6): fork 子进程方案已修,真机验证(启动/停止/重启全流程)
 - [x] 玩家 health/hunger/xp/坐标接 RCON(会话 6): 已实现,真机验证链路
 - [x] playit/ngrok 内置(会话 7): ngrok arm64 下载成功;TunnelBinaryManager 泛化;模拟器验证内置 frpc 回归;playit/ngrok 真机内置验证待真机上线
+- [x] Paper 版本列表为空 bug(会话 8): fill 镜像 builds 返回 JSONArray 而代码按对象解析 → 版本永远为空;已修复(JSONArray + 并行 + 限最近 25 版),模拟器验证显示 26.2/1.21.11 等
+- [x] 版本自动爬取(会话 8): Nukkit(Jenkins CI)/PocketMine(GitHub releases)自动爬取;Paper/Purpur/Vanilla 已网络爬取;Spigot/Pufferfish 无公开 API 保留硬编码(更新到 1.21.x)
+- [x] 服务器删除(会话 8): 列表卡片删除图标 + 确认框 + 连文件递归删除,模拟器验证通过
+- [ ] 创建向导版本下拉在 MuMu 模拟器点击不展开(ExposedDropdownMenu,疑似模拟器问题;下载核心对话框正常;真机待验证)
+- [ ] Spigot/Pufferfish 无公开版本 API:getbukkit 国内 DNS 不通,spigot 下载会失败;Pufferfish 下载 URL 待真机验证
+- [ ] Nukkit/PocketMine 自动爬取分支未在模拟器实测(编译通过)
 - [ ] APK 构建缓存污染问题: 本次构建 APK 38MB 正常,195MB 问题未复现;根因疑似 debug 构建时 classes.dex 异常(44MB)+ 未压缩打包,待确认是否已随构建环境稳定消失
 - [ ] oshi/JNA glibc 警告未消除(无害,可加白名单或忽略)
 - [ ] `ensureRuntime` 的 release 文件补丁未验证(已由 IgnoreJavaVersion 绕过,可留)
