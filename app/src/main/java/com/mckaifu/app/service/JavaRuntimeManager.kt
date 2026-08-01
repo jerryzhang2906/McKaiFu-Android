@@ -81,10 +81,12 @@ object JavaRuntimeManager {
     }
 
     fun ensureRuntime(context: Context, version: Int): String? {
-        jreHome(context, version)?.let { home ->
+        val home = jreHome(context, version)
+        if (home != null && isRuntimeValid(context, version)) {
             patchRelease(File(home))
             return home
         }
+        if (home != null) deleteRuntime(context, version)
         javaExecutable(context, version)?.let { return it }
 
         if (isBundledInAssets(context, version)) {
@@ -93,6 +95,20 @@ object JavaRuntimeManager {
             }
         }
         return null
+    }
+
+    private fun isRuntimeValid(context: Context, version: Int): Boolean {
+        val jli = File(runtimeDir(context, version), "lib/libjli.so")
+        if (!jli.exists()) return true
+        return try {
+            val bytes = jli.readBytes()
+            val text = bytes.toString(Charsets.ISO_8859_1)
+            val glibc = text.contains("libc.so.6") || text.contains("libdl.so.2") || text.contains("libm.so.6")
+            val bionic = text.contains("libc.so") || text.contains("libdl.so")
+            !glibc && bionic
+        } catch (_: Exception) {
+            true
+        }
     }
 
     fun deleteRuntime(context: Context, version: Int) {

@@ -1,7 +1,7 @@
 # McKaiFu 项目记忆 (Project Memory)
 
 > 本文档记录项目的目标、架构、关键进展、踩坑经验、验证方法和当前状态，
-> 供后续会话快速恢复上下文。最后更新: 2026-08-01(会话10: 版本选择对话框 + 剩余待办收尾)
+> 供后续会话快速恢复上下文。最后更新 2026-08-01 (会话11: JRE 21/25 bionic 缺失修复 + 真机 1.21.11 验证通过)
 
 ---
 
@@ -489,6 +489,48 @@ PocketMine 20 个版本 mcVersion 全是"基岩版"、buildNumber 全 0 → **ke
 - **视频宣传**: 用户需求,待规划(非代码)
 
 ---
+
+
+
+---
+
+## 六·十一、会话 11: JRE 21/25 bionic 缺失修复 + 真机 1.21.11 验证通过 (2026-08-01)
+
+### 1. 问题根因
+- 模拟器上 Paper 1.21.11 服务器报错"加载内置Java运行时失败(JRE库缺失或损坏)"。
+- **根因**: 服务器 `javaVersion: 21` 需要 JRE 21,但 assets 里只有 `jdk/17.tar.xz`(bionic)。
+  模拟器上残留的 `files/jdk/21` 是旧 APK 遗留的 **glibc 版**(依赖 `libdl.so.2`/`libc.so.6`/`libpthread.so.0`),
+  在 Android bionic 上 dlopen 全失败 → `loadJreLibraries()` 返回 false → 报错。
+- 判定方法: 读取 `lib/libjli.so` 的依赖字符串,含 `libc.so.6`/`libdl.so.2` = glibc(无效);
+  含 `libc.so`/`libdl.so` 无版本号后缀 = bionic(有效)。
+
+### 2. 解决
+- **来源**: Amethyst 1.1.7 APK 只内置 jre8,但它的 OpenJDK 构建仓库 `AngelAuraMC/angelauramc-openjdk-build`
+  有 release tag `download_jre21` / `download_jre25`,提供 **bionic 版** JRE tar.xz:
+  `https://github.com/AngelAuraMC/angelauramc-openjdk-build/releases/download/download_jre21/jre21-android-arm64.tar.xz` (27.3MB)
+  `https://github.com/AngelAuraMC/angelauramc-openjdk-build/releases/download/download_jre25/jre25-android-arm64.tar.xz` (36.3MB)
+- 下载(用户迅雷,`D:\迅雷\`)后复制为 `app/src/main/assets/jdk/21.tar.xz` 和 `25.tar.xz`。
+- **关键兼容点**: 现有 17.tar.xz 顶层是 `jre17/`,而 Amethyst 的 tar 顶层是 `./`;
+  `JavaRuntimeManager.extractTarXz` 用 `name.substringAfter('/')` 剥离第一层,
+  两者提取后都落在 `files/jdk/<ver>/bin`、`lib` 下,结构一致,无需重打包。
+- **代码修复** (JavaRuntimeManager.kt): `ensureRuntime` 增加 `isRuntimeValid` 校验,
+  已存在的 runtime 若检测到 glibc 特征则 `deleteRuntime` 后重新解压 assets 内的 bionic 版。
+
+### 3. 真机验证 (小米 90d69b9, arm64-v8a, Android 15)
+- 安装新 debug APK (127.8MB, 含 21/25.tar.xz)。
+- 手动创建 1.21.11 服务器: push `paper-1.21.11-132.jar` → `files/servers/c9e308f0-4ac2-4b3b-b157-8f5f8e0aed9d/paper-1.21.11.jar`,
+  在 servers.json 追加 `javaVersion:21` 的配置 (port 25566)。
+- 启动后日志显示:
+  - `[03:56:47 INFO]: Done (26.910s)! For help, type "help"` → **Paper 1.21.11 完整启动成功**。
+  - bionic JRE 21 解压、dlopen 全部成功(无 glibc 依赖错误)。
+- 次要警告: spark 插件 async-profiler 原生库需 `libdl.so.2`(glibc)加载失败,仅影响 profiler,不影响服务器运行。
+
+### 4. 环境备注
+- MuMu 模拟器 adb 端口非 7555:`adb_debug.mode=0`(adb 调试关闭),MuMu 主进程监听 20496 但连接 offline。
+  模拟器验证需先开启 MuMu 的 adb 调试(设置→adb调试)或用真机。真机为 arm64,比模拟器(ARM 翻译层)更可靠。
+- D 盘 `OpenJDK*U-jre_aarch64_linux_hotspot_*.tar.gz` 均为 **glibc 版,不可用**。
+- Amethyst APK 运行时 JRE 下载源逻辑在 `NewJREUtil.java` 的 `getJreSource()`。
+
 
 ## 七、待办 / 已知问题
 
