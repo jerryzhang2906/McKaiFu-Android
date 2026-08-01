@@ -37,6 +37,7 @@ class DownloadManager {
                     CoreType.POCKETMINE -> fetchPocketmineVersions()
                     CoreType.CUSTOM -> emptyList()
                 }
+                android.util.Log.d("mckaifu-core", "$coreType -> ${versions.size} versions, first=${versions.firstOrNull()?.mcVersion}")
                 val all = _cachedCoreVersions.value.toMutableMap()
                 all[coreType] = versions
                 _cachedCoreVersions.value = all
@@ -400,32 +401,95 @@ class DownloadManager {
         return result.reversed()
     }
 
-    // ── Pufferfish (硬编码,无公开 API) ──
-    private fun fetchPufferfishVersions(): List<CoreVersion> {
-        val vers = listOf("1.21.1", "1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4")
-        return vers.mapIndexed { i, mcVer ->
-            CoreVersion(
-                coreType = CoreType.PUFFERFISH,
-                version = mcVer,
-                mcVersion = mcVer,
-                downloadUrl = "https://pufferfish.host/downloads/pufferfish/builds/latest/$mcVer",
-                isRecommended = i == 0,
-            )
-        }
+    // ── Pufferfish (官方 Jenkins CI,自动爬取) ──
+    private suspend fun fetchPufferfishVersions(): List<CoreVersion> = coroutineScope {
+        val jobs = try {
+            val root = JSONObject(fetchUrl("https://ci.pufferfish.host/api/json?tree=jobs[name,url]"))
+            val arr = root.getJSONArray("jobs")
+            (0 until arr.length()).map { arr.getJSONObject(it).optString("name", "") }
+                .filter { it.startsWith("Pufferfish-") && !it.startsWith("Pufferfish-Purpur") }
+        } catch (_: Exception) { emptyList() }
+        if (jobs.isEmpty()) return@coroutineScope emptyList()
+
+        jobs.map { job ->
+            async(Dispatchers.IO) {
+                try {
+                    val buildUrl = "https://ci.pufferfish.host/job/$job/lastSuccessfulBuild"
+                    val json = JSONObject(fetchUrl(
+                        "$buildUrl/api/json?tree=number,url,artifacts[fileName,relativePath]"
+                    ))
+                    val arts = json.optJSONArray("artifacts")
+                    if (arts == null || arts.length() == 0) return@async null
+                    val a = arts.getJSONObject(0)
+                    val fileName = a.optString("fileName", "")
+                    val relativePath = a.optString("relativePath", fileName)
+                    val buildNum = json.optInt("number", 0)
+                    val mcVer = Regex("paperclip-(\\d+\\.\\d+(?:\\.\\d+)?)").find(fileName)?.groupValues?.get(1)
+                        ?: job.removePrefix("Pufferfish-")
+                    CoreVersion(
+                        coreType = CoreType.PUFFERFISH,
+                        version = "$mcVer-$buildNum",
+                        mcVersion = mcVer,
+                        buildNumber = buildNum,
+                        downloadUrl = "${json.optString("url", "$buildUrl/")}artifact/$relativePath",
+                    )
+                } catch (_: Exception) { null }
+            }
+        }.awaitAll().filterNotNull()
+            .sortedWith(Comparator { a, b ->
+                val ta = versionTuple(a.mcVersion)
+                val tb = versionTuple(b.mcVersion)
+                for (i in 0 until maxOf(ta.size, tb.size)) {
+                    val x = ta.getOrNull(i) ?: 0
+                    val y = tb.getOrNull(i) ?: 0
+                    if (x != y) return@Comparator y.compareTo(x)
+                }
+                0
+            })
+            .mapIndexed { i, v -> v.copy(isRecommended = i == 0) }
     }
 
-    // ── Spigot (硬编码,getbukkit 下载源国内常失效,建议改用 Paper) ──
+    // ── Spigot (getbukkit.org 页面解析,自动爬取) ──
     private fun fetchSpigotVersions(): List<CoreVersion> {
-        val vers = listOf("1.21.1", "1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4")
-        return vers.mapIndexed { i, mcVer ->
-            CoreVersion(
-                coreType = CoreType.SPIGOT,
-                version = mcVer,
-                mcVersion = mcVer,
-                downloadUrl = "https://download.getbukkit.org/spigot/spigot-$mcVer.jar",
-                isRecommended = i == 0,
-            )
+        val html = try {
+            fetchUrl("https://getbukkit.org/download/spigot")
+        } catch (_: Exception) { return emptyList() }
+
+        val result = mutableListOf<CoreVersion>()
+        // 每个 download-pane 块:Version(h2) / Size(h3) / 下载按钮 href="/get/{token}"
+        val panePattern = Regex(
+            "class=\"download-pane\".*?<h2>([^<]+)</h2>.*?<h3>([^<]+)</h3>.*?href=\"(https://getbukkit\\.org/get/[^\"]+)\"",
+            RegexOption.DOT_MATCHES_ALL
+        )
+        for (m in panePattern.findAll(html)) {
+            try {
+                val mcVer = m.groupValues[1].trim()
+                val sizeText = m.groupValues[2].trim()
+                val downloadUrl = m.groupValues[3].trim()
+                val sizeMb = sizeText.substringBefore("MB").trim().toFloatOrNull() ?: 0f
+                if (mcVer.matches(Regex("\\d+\\.\\d+(\\.\\d+)?"))) {
+                    result.add(CoreVersion(
+                        coreType = CoreType.SPIGOT,
+                        version = mcVer,
+                        mcVersion = mcVer,
+                        downloadUrl = downloadUrl,
+                        fileSize = (sizeMb * 1024 * 1024).toLong(),
+                    ))
+                }
+            } catch (_: Exception) {}
         }
+        return result
+            .sortedWith(Comparator { a, b ->
+                val ta = versionTuple(a.mcVersion)
+                val tb = versionTuple(b.mcVersion)
+                for (i in 0 until maxOf(ta.size, tb.size)) {
+                    val x = ta.getOrNull(i) ?: 0
+                    val y = tb.getOrNull(i) ?: 0
+                    if (x != y) return@Comparator y.compareTo(x)
+                }
+                0
+            })
+            .mapIndexed { i, v -> v.copy(isRecommended = i == 0) }
     }
 
     // ── Vanilla API ──

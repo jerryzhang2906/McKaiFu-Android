@@ -130,7 +130,7 @@ fun CoreDownloadScreen(serverId: String, navController: NavController, vm: MainV
                     }
                 }
 
-                items(versions.take(30), key = { "${it.mcVersion}_${it.buildNumber}" }) { version ->
+                items(versions.take(30), key = { "${it.coreType}_${it.version}_${it.buildNumber}" }) { version ->
                     CoreVersionCard(
                         version = version,
                         onClick = {

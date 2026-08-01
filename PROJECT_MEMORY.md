@@ -1,7 +1,7 @@
 # McKaiFu 项目记忆 (Project Memory)
 
 > 本文档记录项目的目标、架构、关键进展、踩坑经验、验证方法和当前状态，
-> 供后续会话快速恢复上下文。最后更新: 2026-07-31(会话6: 底栏修复/RCON/fork 子进程 JVM)
+> 供后续会话快速恢复上下文。最后更新: 2026-08-01(会话9: 全核心版本自动爬取 + LazyColumn key 崩溃修复)
 
 ---
 
@@ -418,7 +418,49 @@ aarch64-linux-android21-clang.cmd -shared -fPIC -O2 -o libmckaifu_vm.so vmlaunch
 
 ### 4. 待注意
 - 创建向导里版本 ExposedDropdownMenu **在 MuMu 模拟器上点击不展开**(input tap 无效),但穿透页区域下拉同组件曾正常 → 疑似模拟器时序/渲染问题;真机待验证。**下载核心对话框能正常显示版本列表**,不影响实际选版本
-- APK 未重新构建验证 Nukkit/PocketMine 分支(已编译通过,但未在模拟器拉真实数据)
+
+---
+
+## 六·八、会话 9: 全核心版本自动爬取(Spigot/Pufferfish 去硬编码)(2026-08-01)
+
+**需求**: 所有服务器核心都要自动爬取版本(不硬编码、不怕新版本)。会话 8 遗留 Spigot/Pufferfish 硬编码,本次补齐。
+
+### 1. Pufferfish: Jenkins CI 自动爬取(官方,无版控 API)
+
+- 官方 Jenkins `https://ci.pufferfish.host/api/json?tree=jobs[name,url]` → job 名 `Pufferfish-1.17`~`Pufferfish-1.21`(排除 `Pufferfish-Purpur` 前缀)
+- 各 job 并行 `lastSuccessfulBuild/api/json?tree=number,url,artifacts[fileName,relativePath]`
+- mcVersion 用正则 `paperclip-(\d+\.\d+(?:\.\d+)?)` 从 artifact 文件名提取;下载 URL = `{buildUrl}artifact/{relativePath}`
+- **验证**(MuMu): 显示 **5 个版本,最新 1.21.10(Build #39,推荐)**,jar 57.8MB 200 OK ✓
+
+### 2. Spigot: getbukkit.org 页面 HTML 解析(官方站)
+
+- 官方站 `https://getbukkit.org/download/spigot`,解析 51 个 `class="download-pane"` 块:
+  正则 `class="download-pane".*?<h2>{ver}</h2>.*?<h3>{sizeMB}</h3>.*?href="https://getbukkit\.org/get/{token}"`
+  → `fileSize = sizeMB*1024*1024`;下载 URL = `getbukkit.org/get/{token}`(**302 跳转**到真实 jar,不能用 download.getbukkit.org 直接下载——DNS 不通)
+- **验证**(MuMu): 显示 **51 个版本,最新 26.2(推荐)**,下载 302→jar 30.2MB 200 OK ✓
+
+### 3. 崩溃修复: LazyColumn key 重复(重要!)
+
+**症状**: 打开 PocketMine 页 app 崩溃("屡次停止运行")。
+**根因**: `CoreDownloadScreen.kt` LazyColumn key = `"${it.mcVersion}_${it.buildNumber}"`,
+PocketMine 20 个版本 mcVersion 全是"基岩版"、buildNumber 全 0 → **key 全部 `基岩版_0` 重复** →
+`IllegalArgumentException: Key "基岩版_0" was already used`。
+**修复**: key 改为 `"${it.coreType}_${it.version}_${it.buildNumber}"`(`version` 字段对 PocketMine 是 tag、Spigot 是 mcVer、Paper 是 `26.2-87`,各核心均唯一)。
+**验证**: 修复后 PocketMine 显示 **20 个版本**不再崩溃 ✓
+
+### 4. 全核心自动爬取验证汇总(MuMu 模拟器,全部通过)
+
+| 核心 | 数据源 | 验证结果 |
+|---|---|---|
+| Paper | fill.papermc.io 镜像 | 26.2(推荐)+ 历史版 |
+| Purpur | api.purpurmc.org | 可用 |
+| Pufferfish | ci.pufferfish.host Jenkins | **5 个版本,1.21.10** |
+| Spigot | getbukkit.org HTML | **51 个版本,26.2** |
+| 原版/Vanilla | launchermeta | 可用 |
+| Nukkit | ci.opencollab.dev Jenkins | **1 个版本(最新构建)** |
+| PocketMine | api.github.com releases | **20 个版本** |
+
+调试日志 tag: `mckaifu-core`(`$coreType -> ${versions.size} versions, first=...`)
 
 ---
 
@@ -433,16 +475,15 @@ aarch64-linux-android21-clang.cmd -shared -fPIC -O2 -o libmckaifu_vm.so vmlaunch
 - [x] Paper 版本列表为空 bug(会话 8): fill 镜像 builds 返回 JSONArray 而代码按对象解析 → 版本永远为空;已修复(JSONArray + 并行 + 限最近 25 版),模拟器验证显示 26.2/1.21.11 等
 - [x] 版本自动爬取(会话 8): Nukkit(Jenkins CI)/PocketMine(GitHub releases)自动爬取;Paper/Purpur/Vanilla 已网络爬取;Spigot/Pufferfish 无公开 API 保留硬编码(更新到 1.21.x)
 - [x] 服务器删除(会话 8): 列表卡片删除图标 + 确认框 + 连文件递归删除,模拟器验证通过
+- [x] Spigot/Pufferfish 自动爬取(会话 9): Pufferfish 用官方 Jenkins CI、Spigot 用 getbukkit 页面 HTML 解析,均已在模拟器验证(Pufferfish 5 版含 1.21.10 / Spigot 51 版含 26.2)
+- [x] PocketMine 自动爬取验证 + LazyColumn key 重复崩溃修复(会话 9): key 改为 `coreType_version_buildNumber`,模拟器显示 20 个版本不再崩溃
 - [ ] 创建向导版本下拉在 MuMu 模拟器点击不展开(ExposedDropdownMenu,疑似模拟器问题;下载核心对话框正常;真机待验证)
-- [ ] Spigot/Pufferfish 无公开版本 API:getbukkit 国内 DNS 不通,spigot 下载会失败;Pufferfish 下载 URL 待真机验证
-- [ ] Nukkit/PocketMine 自动爬取分支未在模拟器实测(编译通过)
 - [ ] APK 构建缓存污染问题: 本次构建 APK 38MB 正常,195MB 问题未复现;根因疑似 debug 构建时 classes.dex 异常(44MB)+ 未压缩打包,待确认是否已随构建环境稳定消失
 - [ ] oshi/JNA glibc 警告未消除(无害,可加白名单或忽略)
 - [ ] `ensureRuntime` 的 release 文件补丁未验证(已由 IgnoreJavaVersion 绕过,可留)
 - [ ] 截图验证需用 cmd 重定向(`screencap -p`),PS 会坏文件
 - [ ] uiautomator dump 中文乱码: 用 ASCII 脚本提取 text/bounds 到文件再 Read 可绕开(会话 5 已验证)
 - [ ] CommunityScreen 社区列表依赖 GitHub raw 联网,离线时显示重试
-- [ ] **未提交**: 会话 5(frpc 内置)+ 会话 6(导航修复/RCON/fork 方案)+ 会话 7(ngrok 内置/TunnelBinaryManager)全部改动尚未 git commit
 - [ ] 视频宣传(用户需求): B 站宣传视频,热门配音(不用 AI),GitHub 链接,实拍演示,流畅剪辑——待规划
 
 ---
