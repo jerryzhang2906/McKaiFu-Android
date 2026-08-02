@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>McKaiFu 开服大师 · 手机就是你的 Minecraft 服务器</title>
+<meta name="description" content="McKaiFu 开服大师 —— 免 root、免电脑、免懂 Java，在安卓手机上直接运行 Paper 等 Minecraft 服务端。开源 · 免费 · 内网穿透一键联机。">
+<meta property="og:title" content="McKaiFu 开服大师 · 手机就是你的 Minecraft 服务器">
+<meta property="og:description" content="免 root、免电脑，在安卓手机上直接跑 Paper 服务器，一键内网穿透联机。">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-soft: #161b22;
+    --bg-card: #1c2230;
+    --border: #2a3242;
+    --text: #e6edf3;
+    --text-dim: #9aa7b5;
+    --accent: #39d353;
+    --accent-dim: #238636;
+    --warn: #f2cc60;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 20px; }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(14,17,22,.85); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  nav .brand { font-weight: 700; font-size: 17px; color: var(--text); }
+  nav .brand span { color: var(--accent); }
+  nav .links { display: flex; gap: 22px; font-size: 14px; }
+  nav .links a { color: var(--text-dim); }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  /* ---------- hero ---------- */
+  header.hero {
+    text-align: center;
+    padding: 90px 20px 70px;
+    background:
+      radial-gradient(800px 380px at 50% -10%, rgba(57,211,83,.12), transparent),
+      linear-gradient(180deg, var(--bg), var(--bg-soft));
+  }
+  .hero h1 { font-size: 44px; font-weight: 800; letter-spacing: 1px; }
+  .hero h1 .mc { color: var(--accent); }
+  .hero .sub { margin: 16px auto 8px; max-width: 620px; color: var(--text-dim); font-size: 18px; }
+  .hero .chips { margin-top: 22px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .hero .chip {
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 14px; font-size: 13px; color: var(--text-dim);
+  }
+  .hero .cta { margin-top: 34px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 12px 26px; border-radius: 10px;
+    font-size: 15px; font-weight: 600; transition: transform .12s ease;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: #08130b; }
+  .btn-primary:hover { background: #4ce06a; }
+  .btn-ghost { border: 1px solid var(--border); color: var(--text); background: var(--bg-card); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .hero .meta { margin-top: 26px; font-size: 13px; color: var(--text-dim); }
+
+  /* ---------- sections ---------- */
+  section { padding: 64px 0; }
+  section:nth-of-type(even) { background: var(--bg-soft); }
+  .sec-title { font-size: 26px; font-weight: 700; text-align: center; margin-bottom: 8px; }
+  .sec-sub { text-align: center; color: var(--text-dim); margin-bottom: 40px; }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px;
+  }
+  .card h3 { font-size: 16px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .card h3 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+  .card p { color: var(--text-dim); font-size: 13.5px; }
+
+  /* cores */
+  table { width: 100%; border-collapse: collapse; background: var(--bg-card); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  th { color: var(--text-dim); font-weight: 600; background: var(--bg); }
+  tr:last-child td { border-bottom: none; }
+  td .tag {
+    display: inline-block; background: rgba(57,211,83,.12); color: var(--accent);
+    border-radius: 6px; padding: 2px 8px; font-size: 12px; margin-left: 8px;
+  }
+
+  /* how it works */
+  .how ol { max-width: 720px; margin: 0 auto; padding-left: 20px; }
+  .how li { margin-bottom: 14px; color: var(--text-dim); }
+  .how li strong { color: var(--text); }
+
+  /* download */
+  .dl { text-align: center; }
+  .dl .btn { font-size: 16px; padding: 14px 34px; }
+  .dl .note { margin-top: 16px; font-size: 13px; color: var(--text-dim); }
+
+  /* footer */
+  footer { border-top: 1px solid var(--border); padding: 32px 0 40px; color: var(--text-dim); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  footer a { color: var(--text-dim); }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 32px; }
+    nav .links { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span>McKaiFu</span> 开服大师</div>
+    <div class="links">
+      <a href="#features">功能</a>
+      <a href="#cores">核心</a>
+      <a href="#how">原理</a>
+      <a href="#download">下载</a>
+      <a href="https://github.com/jerryzhang2906/McKaiFu-Android" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>手机就是你的 <span class="mc">Minecraft 服务器</span></h1>
+    <p class="sub">不用开电脑，不用 root，不用懂 Java —— 一台安卓手机，点一下，Paper 服务器就跑起来了。</p>
+    <div class="chips">
+      <span class="chip">免 root</span>
+      <span class="chip">免电脑</span>
+      <span class="chip">内置 JRE 17/21/25</span>
+      <span class="chip">7 大核心</span>
+      <span class="chip">内网穿透联机</span>
+      <span class="chip">开源 · 免费</span>
+    </div>
+    <div class="cta">
+      <a class="btn btn-primary" href="#download">下载体验</a>
+      <a class="btn btn-ghost" href="https://github.com/jerryzhang2906/McKaiFu-Android" target="_blank" rel="noopener">查看源码</a>
+    </div>
+    <p class="meta">已在小米手机（Android 15）实测跑通 Paper 1.21.11，局域网内正常联机</p>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2 class="sec-title">开箱即用的开服体验</h2>
+    <p class="sec-sub">从创建服务器到好友进服，全程在手机上完成</p>
+    <div class="grid">
+      <div class="card"><h3><span class="dot"></span>7 大核心</h3><p>Paper / Purpur / Pufferfish / Spigot / 原版 / Nukkit / PocketMine，Java 版与基岩版都能开。</p></div>
+      <div class="card"><h3><span class="dot"></span>版本自动爬取</h3><p>核心版本实时从官方拉取，无需手动找下载链接。</p></div>
+      <div class="card"><h3><span class="dot"></span>内置 JRE 17/21/25</h3><p>为安卓原生库编译的 bionic JRE 打进 App，启动即用，不用自己装 Java。</p></div>
+      <div class="card"><h3><span class="dot"></span>一键内网穿透</h3><p>Playit.gg / Ngrok / NATAPP / 樱花frp，含国内节点，异地好友直接进服。</p></div>
+      <div class="card"><h3><span class="dot"></span>实时控制台</h3><p>看日志、发指令，服务器状态尽在掌握。</p></div>
+      <div class="card"><h3><span class="dot"></span>服务器监控</h3><p>TPS、内存、CPU 实时监控，离线自动重启。</p></div>
+      <div class="card"><h3><span class="dot"></span>玩家管理</h3><p>在线列表、踢出、封禁，管理操作顺手做。</p></div>
+      <div class="card"><h3><span class="dot"></span>世界备份</h3><p>存档备份不丢失，整合包一键导出导入。</p></div>
+      <div class="card"><h3><span class="dot"></span>插件一键装</h3><p>插件商店、文件管理、配置编辑，桌面端能做的这里都有。</p></div>
+      <div class="card"><h3><span class="dot"></span>定时任务</h3><p>定时开关服、自动重启，挂机托管。</p></div>
+      <div class="card"><h3><span class="dot"></span>网页地图</h3><p>浏览器里看世界，手机查看服务器地图。</p></div>
+      <div class="card"><h3><span class="dot"></span>内测反馈一键导出</h3><p>日志一键导出分享，反馈问题更省心。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="cores">
+  <div class="wrap">
+    <h2 class="sec-title">支持的核心</h2>
+    <p class="sec-sub">服务器端一键创建，客户端按版本连接</p>
+    <table>
+      <tr><th>核心</th><th>类型</th><th>适用客户端</th></tr>
+      <tr><td>Paper / Purpur / Pufferfish / Spigot / 原版 <span class="tag">高版本优化</span></td><td>Java 版</td><td>同版本 Java 客户端</td></tr>
+      <tr><td>Nukkit / PocketMine-MP</td><td>基岩版</td><td>基岩版客户端</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="how" class="how">
+  <div class="wrap">
+    <h2 class="sec-title">它是怎么跑起来的</h2>
+    <p class="sec-sub">核心思路：绕开 SELinux，把 JVM 跑进 App 进程</p>
+    <ol>
+      <li><strong>为什么手机上不能直接开服？</strong>安卓系统（尤其 MIUI）用 SELinux 拦截 <code>exec</code>，直接执行 <code>java -jar</code> 会失败。</li>
+      <li><strong>McKaiFu 怎么做？</strong>打包一份针对安卓原生 libc 编译的 OpenJDK，启动时通过 JNI 把 JVM 的 <code>.so</code> 逐个加载进 App 进程，直接调用 <code>JLI_Launch()</code>。</li>
+      <li><strong>结果？</strong>整个服务器跑在 App 内部，从不触发 <code>exec</code>，SELinux 管不到——无需 root。</li>
+    </ol>
+  </div>
+</section>
+
+<section id="download" class="dl">
+  <div class="wrap">
+    <h2 class="sec-title">下载</h2>
+    <p class="sec-sub">当前内测版 v1.5.0-beta1（versionCode 5）</p>
+    <a class="btn btn-primary" href="https://github.com/jerryzhang2906/McKaiFu-Android/releases" target="_blank" rel="noopener">GitHub Releases 下载</a>
+    <p class="note">APK 约 128MB（含内置 JRE）<br>安装后如有问题，可在 App 内「导出日志」反馈</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>McKaiFu 开服大师 · 开源免费 · 与 Mojang / Microsoft 无关</div>
+    <div><a href="https://github.com/jerryzhang2906/McKaiFu-Android" target="_blank" rel="noopener">GitHub</a></div>
+  </div>
+</footer>
+
+</body>
+</html>
